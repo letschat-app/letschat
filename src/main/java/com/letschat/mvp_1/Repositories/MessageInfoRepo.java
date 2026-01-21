@@ -36,17 +36,16 @@ SELECT distinct on (mi."MessageId")
   END AS content,
   
   (
-    SELECT 
-      CASE 
-        WHEN uc."Type" = 'private' OR uc."Type" = 'group' 
-        THEN ui."PrivateName"
-        ELSE ui."PublicName"
-      END
-    FROM "UserChat" uc
-    JOIN "UserInfo" ui ON ui."UserId" = mi."SenderId"
-    WHERE uc."Id" = mi."ChatId"
-    LIMIT 1
-  ) AS sendername,
+  SELECT uc2."UserName"
+  FROM "UserChat" uc1
+  JOIN "UserChat" uc2
+    ON uc2."ChatId" = uc1."ChatId"
+   AND uc2."UserId" = mi."SenderId"
+  WHERE uc1."Id" = mi."ChatId"
+  LIMIT 1
+) AS sendername,
+
+  mi."SenderId" as userid,
   
   mi."Time" as timestamp,
   mi."RepliedTo" as repliedto,
@@ -119,11 +118,17 @@ FROM (
             ELSE mi."MediaId"
         END AS content,
 
-        CASE 
-            WHEN uc."Type" IN ('private', 'group') 
-            THEN ui."PrivateName"
-            ELSE ui."PublicName"
-        END AS sendername,
+        (
+  SELECT uc2."UserName"
+  FROM "UserChat" uc1
+  JOIN "UserChat" uc2
+    ON uc2."ChatId" = uc1."ChatId"
+   AND uc2."UserId" = mi."SenderId"
+  WHERE uc1."Id" = mi."ChatId"
+  LIMIT 1
+) AS sendername,
+
+  mi."SenderId" as userid,
 
         mi."Time" AS timestamp,
         mi."RepliedTo" AS repliedto,
@@ -155,7 +160,7 @@ FROM (
     WHERE mt."RecieverId" = :Userid
     ORDER BY mi."MessageId", mi."Time" ASC
 ) AS latmsg
-WHERE status = 'pending'
+WHERE status = 'pending' or status = 'delivered'
 ORDER BY timestamp ASC;
 
           """)
@@ -175,5 +180,42 @@ ORDER BY timestamp ASC;
               where "MessageId"=:msgId and "DeletedBy"=:userId returning *
               """)
               Mono<MessageTrackHistory> reviveforeone(String userId,String msgId);
+
+
+      @Query("""
+          SELECT
+    mi."MessageId"        AS msgid,
+    uc."ChatId"           AS chatid,
+    mi."MessageType"      AS type,
+    CASE
+        WHEN mi."MessageType" = 'text' THEN mi."Message"
+        ELSE mi."MediaId"
+    END                   AS content,
+    (
+  SELECT uc2."UserName"
+  FROM "UserChat" uc1
+  JOIN "UserChat" uc2
+    ON uc2."ChatId" = uc1."ChatId"
+   AND uc2."UserId" = mi."SenderId"
+  WHERE uc1."Id" = mi."ChatId"
+  LIMIT 1
+) AS sendername,
+    mi."SenderId"           AS userid,
+    mi."Time"             AS timestamp,
+    mi."RepliedTo"        AS repliedto,
+    mi."ForwardedFrom"    AS forwardedfrom,
+    mi."DeletedBy"        AS isdeletedone,
+    mi."IsRevived"        AS revived,
+    mi."SpaceId"          AS spaceid
+FROM "MessageInfo" mi
+JOIN "UserChat" uc
+    ON uc."Id" = mi."ChatId"
+JOIN "UserInfo" ui
+    ON ui."UserId" = mi."SenderId"
+WHERE uc."ChatId" = :Chatid
+ORDER BY mi."Time" ASC;
+
+          """)
+          Flux<LoadMessageDTO> loadforroom(String Chatid);
           
 }

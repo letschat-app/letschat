@@ -28,7 +28,12 @@ public class EventService {
 
     public Flux<EventInfo> getevents(String Userid){
         System.out.println("returning");
-        return eventInfoRepo.findByUserId(Userid)
-        .doOnNext(ev->System.out.println(ev.getStartTime()));
+        return eventInfoRepo.findByUserId(Userid);
+        //.doOnNext(ev->System.out.println(ev.getStartTime()));
+    }
+
+    public Mono<String> action(EventInfo event){
+        return eventInfoRepo.save(event)
+        .thenReturn("ok");
     }
 }

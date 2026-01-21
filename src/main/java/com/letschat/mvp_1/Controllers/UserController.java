@@ -89,7 +89,7 @@ public class UserController {
     @GetMapping("/chatbox/{UserId}")
     public Mono<List<ChatBoxReturnDTO>> getchatbox(@PathVariable String UserId){
         return chatBoxService.getchat(UserId).collectList();
-        //.doOnNext(data->System.out.println(data));
+       // .doOnNext(data->System.out.println(data.getcAt()));
     }
 
     //@PostMapping(value="/profile/{UserId}",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -111,6 +111,24 @@ public class UserController {
     @GetMapping("getevents/{UserId}")
     public Mono<List<EventInfo>> getevent(@PathVariable String UserId){
         return eventService.getevents(UserId).collectList();
+    }
+
+    @PostMapping("/update")
+    public Mono<ResponseEntity<String>> updateaction(@RequestBody EventInfo event){
+        System.out.println("updated");
+        return eventService.action(event).thenReturn(ResponseEntity.ok("ok"));
+    }
+
+    @GetMapping("/getchatinfo/{Chatid}")
+    public Mono<UserSearchResult> getInfo(@PathVariable String Chatid,@RequestHeader("User-Id") String Userid){
+        return userChatService.getInfo(Chatid,Userid);
+    }
+    
+    @PostMapping("/updatemyinfo/{ChatId}")
+    public Mono<ResponseEntity<String>> updateInfo(@PathVariable String ChatId,@RequestBody UserSearchResult info){
+        return userChatService.updateInfo(info,ChatId)
+        .map(msg->ResponseEntity.ok("ok"))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
     }
     
 }

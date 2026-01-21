@@ -29,4 +29,11 @@ public interface IdTableRepo extends ReactiveCrudRepository<IdTableInfo, Long> {
     """)
     Mono<Long> getGroupid();
 
+    @Query("""
+        UPDATE "IdTable"
+        SET "ClassRoomId" = "ClassRoomId" + 1
+        RETURNING "ClassRoomId"
+    """)
+    Mono<Long> getClassid();
+
 }

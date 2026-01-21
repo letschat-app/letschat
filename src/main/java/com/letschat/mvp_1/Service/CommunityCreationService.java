@@ -22,7 +22,7 @@ public class CommunityCreationService {
     public Mono<String> create(CommunityCreationDTO request,String Userid){
         return generateChatId()
         .flatMap(chid->{
-            return userChatInfoRepo.insert(chid,Userid ,request.getCommunityName(), Userid, LocalDateTime.now(), LocalDateTime.now(), "community")
+            return userChatInfoRepo.insert(chid,Userid ,request.getCommunityName(), Userid, LocalDateTime.now(), LocalDateTime.now(), "community","Owner")
             .flatMap(chat->{
                 return generateId()
                 .flatMap(cid->{

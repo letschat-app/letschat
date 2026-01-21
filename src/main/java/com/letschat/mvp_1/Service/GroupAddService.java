@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
 
+import com.letschat.mvp_1.Repositories.ClassRoomRepo;
 import com.letschat.mvp_1.Repositories.GroupInfoRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
@@ -17,11 +18,13 @@ public class GroupAddService {
     private final UserChatInfoRepo userChatInfoRepo;
     private final GroupInfoRepo groupInfoRepo;
     private final MyWebSocketHandler myWebSocketHandler;
-    public GroupAddService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,GroupInfoRepo groupInfoRepo,MyWebSocketHandler myWebSocketHandler){
+    private final ClassRoomRepo classRoomRepo;
+    public GroupAddService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,GroupInfoRepo groupInfoRepo,MyWebSocketHandler myWebSocketHandler,ClassRoomRepo classRoomRepo){
         this.userInfoRepo=userInfoRepo;
         this.userChatInfoRepo=userChatInfoRepo;
         this.groupInfoRepo=groupInfoRepo;
         this.myWebSocketHandler=myWebSocketHandler;
+        this.classRoomRepo=classRoomRepo;
     }
 
     public Mono<String> addmember(String GroupId,String UserId){
@@ -46,7 +49,8 @@ public class GroupAddService {
                         user.getPublicName(),
                         now,
                         now,
-                        "group"
+                        "group",
+                        "member"
                     )
                 .then(
                     // userChatInfoRepo.insert(
@@ -67,4 +71,37 @@ public class GroupAddService {
     });
 
     }
+
+    public Mono<String> joinclass(String RoomId,String UserId){
+        LocalDateTime now=LocalDateTime.now();
+        return classRoomRepo.findByRoomId(RoomId)
+        .flatMap(room->{
+            return userInfoRepo.findByUserId(UserId)
+            .flatMap(user->{
+                return userChatInfoRepo.findByChatId(room.getChatId())
+
+                .flatMap(chat->{
+                    return userChatInfoRepo.joinedOrNot(chat.getChatId(), UserId)
+                    .flatMap(chatid->Mono.just(chatid))
+                    .switchIfEmpty(
+                     userChatInfoRepo.insert(
+                        chat.getChatId(),
+                        user.getUserId(),
+                        room.getRoomName(),
+                        user.getPublicName(),
+                        now,
+                        now,
+                        "classroom",
+                        "student"
+                    )
+                
+                .then(classRoomRepo.updateCount(RoomId, room.getNoOfStudents() + 1).then())
+                .thenReturn(chat.getChatId()));
+                });
+            });
+        })
+        .switchIfEmpty(Mono.just("classroom not exist"));
+    }
+
+    
 }

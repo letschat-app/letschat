@@ -28,13 +28,18 @@ public class ChatBoxService {
         Flux<ChatBoxReturnDTO> username=userChatInfoRepo.findUserChat(UserId)
         .map(user->{
            // System.out.println(user.getChatId()+","+user.getChatName()+","+user.getId()+","+user.getType());
-            return user;
+           //System.out.println(user.gettimestamp()) ;
+           return user;
         });
         Flux<ChatBoxReturnDTO> groupname=userChatInfoRepo.findGroupChat(UserId)
         .map(group->{
            // System.out.println(group.getChatId()+","+group.getChatName()+","+group.getId()+","+group.getType());
             return group;
         });
-        return Flux.concat(username,groupname);
+        Flux<ChatBoxReturnDTO> roomname=userChatInfoRepo.findClassRoomChat(UserId)
+        .map(room->{
+            return room;
+        });
+        return Flux.concat(username,groupname,roomname);
     }
 }

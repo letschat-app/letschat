@@ -1,13 +1,17 @@
 package com.letschat.mvp_1.Controllers;
 
+import java.util.List;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Service.GroupAddService;
 import com.letschat.mvp_1.Service.GroupCreateService;
 
@@ -37,5 +41,10 @@ public class GroupContoller {
         return groupAddService.addmember(GroupId, UserId)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
+    }
+
+    @GetMapping("/getmembers/{Chatid}")
+    public Mono<List<UserSearchResult>> getMembers(@PathVariable String Chatid){
+        return groupCreateService.getMembers(Chatid).collectList();
     }
 }

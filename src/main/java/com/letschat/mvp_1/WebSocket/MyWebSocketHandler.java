@@ -105,6 +105,46 @@ public class MyWebSocketHandler implements WebSocketHandler{
             System.out.println(ChatId+"="+Userid+":"+data.gettimestamp());
             return messageInfoRepo.insert(msgId, ChatId, Userid, data.gettype(), data.getcontent(), data.getrepliedto(), data.getforwardedfrom(), data.gettimestamp(),data.getspaceid())
             .flatMap(info->{
+                return userChatInfoRepo.findTypeByChatId(ChatId)
+                .flatMap(type->{
+                    if("classroom".equals(type)){
+                        ACKMessageDTO ack=new ACKMessageDTO();
+                            ack.setchatid(ChatId);
+                            ack.settempmsgid(data.gettempmsgid());
+                            ack.setmsgid(msgId);
+                            ack.setstatus("read");
+                            try {
+                                String ackjson=objectMapper.writeValueAsString(ack);
+                                sender_sink.tryEmitNext(ackjson);
+                            } catch (JsonProcessingException e) {
+                                System.out.println("in ack"+e);
+                            }
+                        return userInfoRepo.findName(Userid,ChatId)
+                        .flatMap(username->{
+                            return userChatInfoRepo.findUserIds(ChatId,Userid)
+                            .flatMap(userids->{
+                                Sinks.Many<String> reciever_sink=usersink.get(userids);
+                                SendingMessageDTO msg=new SendingMessageDTO();
+                                msg.setmsgid(msgId);
+                                msg.setchatid(ChatId);
+                                msg.settype(data.gettype());
+                                msg.setcontent(data.getcontent());
+                                msg.setsendername(username);
+                                msg.settimestamp(data.gettimestamp());
+                                msg.setrepliedto(data.getrepliedto());
+                                msg.setforwardedfrom(data.getforwardedfrom());
+                                msg.setspaceid(data.getspaceid());
+                                try {
+                                    String sendjson=objectMapper.writeValueAsString(msg);
+                                    if(reciever_sink!=null){
+                                        reciever_sink.tryEmitNext(sendjson);
+                                    }
+                                } catch (JsonProcessingException e) {
+                                }
+                                return Mono.empty();
+                            }).then();
+                        }).then();
+                    }
                 return userInfoRepo.findName(Userid,ChatId)
                 .doOnNext(username->System.out.println(username))
                 .flatMap(username->{
@@ -162,6 +202,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
                     }).then();
                 }).then();
             }).then();
+            }).then();
         })
         .onErrorResume(e->{
             return loadmsg(sessionid,json);
@@ -173,14 +214,28 @@ public class MyWebSocketHandler implements WebSocketHandler{
     public Mono<Void> loadmsg(String sessionid,String json){
         String Userid=userid.get(sessionid);
         Sinks.Many<String> sender_sink=usersink.get(Userid);
-        
        // String Chatid;
         return Mono.fromCallable(()->objectMapper.readValue(json,ChatUpdateDTO.class))
             .flatMap(data->{
+                return userChatInfoRepo.findTypeByChatId(data.getuserchatid())
+                .flatMap(type->{
                 System.out.println(data.getpurpose());
                 System.out.println(data.getuserchatid());
+                if("classroom".equals(type)){
+                    if(data.getpurpose().equals("load")){
+                        return messageInfoRepo.loadforroom(data.getuserchatid())
+                        .flatMap(msg->{
+                            return Mono.fromCallable(()->objectMapper.writeValueAsString(msg))
+                            .flatMap(msgjson->{
+                                sender_sink.tryEmitNext(msgjson);
+                                return Mono.empty();
+                            });
+                        }).then();                       
+                    }
+                }
                 System.out.print(json);
                 if(data.getpurpose().equals("load")){
+                    
                     userstatus.compute(Userid, (key,chatmap)->{
                         if(chatmap==null){
                             chatmap=new ConcurrentHashMap<>();
@@ -356,7 +411,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
                 else{
                     return Mono.empty();
                 }
-            });
+            });});
     }
 
     public Mono<Void> onconnect(String Userid){

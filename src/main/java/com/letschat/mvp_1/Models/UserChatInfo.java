@@ -27,9 +27,11 @@ public class UserChatInfo {
     private LocalDateTime Visited;
     @Column("Type")
     private String Type;
+    @Column("Role")
+    private String Role;
 
     public UserChatInfo(){}
-    public UserChatInfo(Long Id,String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,String Status,LocalDateTime Visited,String Type){
+    public UserChatInfo(Long Id,String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,String Status,LocalDateTime Visited,String Type,String Role){
         this.Id=Id;
         this.ChatId=ChatId;
         this.UserId=UserId;
@@ -39,6 +41,7 @@ public class UserChatInfo {
         this.Status=Status;
         this.Visited=Visited;
         this.Type=Type;
+        this.Role=Role;
     }
 
     public Long getId(){
@@ -102,6 +105,13 @@ public class UserChatInfo {
     }
     public void setType(String Type){
         this.Type=Type;
+    }
+
+    public String getRole(){
+        return Role;
+    }
+    public void setRole(String Role){
+        this.Role=Role;
     }
 
 }

@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
 
+import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Models.UserChatInfo;
 import com.letschat.mvp_1.Models.UserInfo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
@@ -60,11 +61,12 @@ public class UserChatService {
         .flatMap(tuple->{
             UserInfo senduser=tuple.getT1();
             UserInfo receiveuser=tuple.getT2();
-             return userChatInfoRepo.findIfExist(senduser.getUserId(), receiveuser.getPublicName(), receiveuser.getPrivateName())
-             .flatMap(chat->{
+            // return userChatInfoRepo.findIfExist(senduser.getUserId(), receiveuser.getPublicName(), receiveuser.getPrivateName())
+             return userChatInfoRepo.findIfExistOrNot(SenderId, RecieverId)
+             .flatMap(chatid->{
                 System.out.println("exist");
-                System.out.println(chat.getChatId());
-                return Mono.just(chat.getChatId());
+                System.out.println(chatid);
+                return Mono.just(chatid);
              })
              .switchIfEmpty(
              generateId()
@@ -85,8 +87,8 @@ public class UserChatService {
                 recievechat.setAt(now);
                 recievechat.setVisited(now);
 
-                return userChatInfoRepo.insert(chatid, SenderId, receiveuser.getPublicName(), senduser.getPublicName(), now, now,"private")
-                .then(userChatInfoRepo.insert(chatid, RecieverId, senduser.getPublicName(), receiveuser.getPublicName(), now, now,"private"))
+                return userChatInfoRepo.insert(chatid, SenderId, receiveuser.getPublicName(), senduser.getPublicName(), now, now,"private",null)
+                .then(userChatInfoRepo.insert(chatid, RecieverId, senduser.getPublicName(), receiveuser.getPublicName(), now, now,"private",null))
                 .thenReturn(chatid);
             }));
         });
@@ -123,5 +125,31 @@ public class UserChatService {
 
             return String.format("%c%c%c%03d", first, second, third, digits);
         });
+    }
+
+    public Mono<UserSearchResult> getInfo(String chatid,String userid){
+        return userChatInfoRepo.getInfo(chatid, userid)
+        .flatMap(user->{
+            UserSearchResult User=new UserSearchResult();
+            User.setUserId(user.getUserId());
+            User.setUserName(user.getUserName());
+            User.setRole(user.getRole());
+            return Mono.just(User);
+        });
+    }
+    public Mono<String> updateInfo(UserSearchResult info,String Chatid){
+        return userChatInfoRepo.findTypeByChatId(Chatid)
+        .flatMap(type->{
+            System.out.println(info.getUserName());
+            System.out.println(type);
+            if(type=="private"){
+                return userChatInfoRepo.updateUsername(info.getUserName(),Chatid,info.getUserId())
+                .then(userChatInfoRepo.updateChatname(info.getUserName(),Chatid,info.getUserId())).thenReturn("ok");
+            }
+            else{
+                return userChatInfoRepo.updateUsername(info.getUserName(),Chatid,info.getUserId()).thenReturn("ok");
+            }
+        })
+        .switchIfEmpty(Mono.just("failed"));
     }
 }

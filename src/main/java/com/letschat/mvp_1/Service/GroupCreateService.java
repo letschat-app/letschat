@@ -4,11 +4,13 @@ import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
 
+import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Repositories.GroupInfoRepo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
 
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Component
@@ -30,7 +32,7 @@ public class GroupCreateService {
         .flatMap(user->generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, user.getPrivateName(), now, now,"group")
+            return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, user.getPrivateName(), now, now,"group","admin")
             .flatMap(chat->{ return generateGroupId()
             .doOnNext(groupid->System.out.println("inside"+chat.getChatId()))
             .flatMap(groupid->{
@@ -92,5 +94,18 @@ public class GroupCreateService {
             return String.format("%c%c%c%03d", first, second, third, digits);
         });
     }
+
+    public Flux<UserSearchResult> getMembers(String chatid){
+        return groupInfoRepo.getMembers(chatid)
+        .flatMap(user->{
+            UserSearchResult User=new UserSearchResult();
+            User.setUserId(user.getUserId());
+            User.setUserName(user.getUserName());
+            User.setRole(user.getRole());
+            return Mono.just(User);
+        })
+        .doOnNext(members->System.out.println(members.getUserName()));
+    }
+    
 
 }

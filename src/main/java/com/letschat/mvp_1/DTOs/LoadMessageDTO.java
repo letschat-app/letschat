@@ -7,6 +7,7 @@ public class LoadMessageDTO {
     private String msgid;
     private String chatid;
     private String sendername;
+    private String userid;
     private String type;
     private String content;
     private LocalDateTime timestamp;
@@ -20,7 +21,7 @@ public class LoadMessageDTO {
     private Integer spaceid;
 
     public LoadMessageDTO(){}
-    public LoadMessageDTO(String msgid,String chatid,String sendername,String type,String content,LocalDateTime timestamp,String repliedto,String forwardedfrom,String status,Boolean isold,Boolean isdeleted,String isdeletedeone,Boolean revived,Integer spaceid){
+    public LoadMessageDTO(String msgid,String chatid,String sendername,String userid,String type,String content,LocalDateTime timestamp,String repliedto,String forwardedfrom,String status,Boolean isold,Boolean isdeleted,String isdeletedeone,Boolean revived,Integer spaceid){
         this.msgid=msgid;
         this.chatid=chatid;
         this.sendername=sendername;
@@ -35,6 +36,7 @@ public class LoadMessageDTO {
         this.isdeletedeone=isdeletedeone;
         this.revived=revived;
         this.spaceid=spaceid;
+        this.userid=userid;
     }
 
     public String getmsgid(){
@@ -58,6 +60,13 @@ public class LoadMessageDTO {
         this.sendername=sendername;
     }
 
+    public String getuserid(){
+        return userid;
+    }
+    public void setuserid(String userid){
+        this.userid=userid;
+    }
+    
     public String gettype(){
         return type;
     }

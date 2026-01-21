@@ -17,9 +17,12 @@ public class EventInfo {
     private String eventColor;
     private String msgId;
     private String chatId;
+    private String action;
+    private Boolean isAdded;
+    private Boolean isSync;
 
     public EventInfo(){}
-    public EventInfo(Long eventId, String userId, String eventTitle,Instant startTime, Instant endTime, String eventDetails,String eventColor, String msgId, String chatId){
+    public EventInfo(Long eventId, String userId, String eventTitle,Instant startTime, Instant endTime, String eventDetails,String eventColor, String msgId, String chatId, String action, Boolean isAdded, Boolean isSync){
         this.eventId = eventId;
         this.userId = userId;
         this.eventTitle = eventTitle;
@@ -29,6 +32,9 @@ public class EventInfo {
         this.eventColor = eventColor;
         this.msgId = msgId;
         this.chatId = chatId;
+        this.action=action;
+        this.isAdded=isAdded;
+        this.isSync=isSync;
     }
 
     public Long getEventId() {
@@ -92,5 +98,26 @@ public class EventInfo {
     }
     public void setChatId(String chatId) {
         this.chatId = chatId;
+    }
+
+    public String getAction(){
+        return action;
+    }
+    public void setAction(String action){
+        this.action=action;
+    }
+
+    public Boolean getIsAdded(){
+        return isAdded;
+    }
+    public void setIsAdded(Boolean isAdded){
+        this.isAdded=isAdded;
+    }
+
+    public Boolean getIsSync(){
+        return isSync;
+    }
+    public void setIsSync(Boolean isSync){
+        this.isSync=isSync;
     }
 }
