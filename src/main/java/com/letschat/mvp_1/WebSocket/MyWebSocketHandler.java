@@ -251,28 +251,29 @@ public class MyWebSocketHandler implements WebSocketHandler{
                         .flatMap(msgjson->{
                             //Sinks.Many<String> sender_sink=usersink.get(Userid);
                             sender_sink.tryEmitNext(msgjson);
-                            return messageTrackHistoryRepo.updatestatusonchat(msg.getmsgid(), Userid,LocalDateTime.now())
-                            .flatMap(updmsg->{
-                                if(usersink.containsKey(updmsg.getSenderId())){
-                                    ACKMessageDTO ack=new ACKMessageDTO();
-                                    ack.setchatid(msg.getchatid());
-                                    ack.setmsgid(msg.getmsgid());
-                                    ack.setstatus("read");
-                                    Sinks.Many<String> ack_sink=usersink.get(updmsg.getSenderId());
-                                    return Mono.fromCallable(()->objectMapper.writeValueAsString(ack))
-                                    .flatMap(ackjson->{
-                                        ack_sink.tryEmitNext(ackjson);
-                                        return Mono.empty();
-                                    })
-                                    .onErrorResume(e->{
-                                        System.out.println(e);
-                                        return Mono.empty();
-                                    });
-                                }
-                                else{
-                                    return Mono.empty();
-                                }
-                            });
+                            // return messageTrackHistoryRepo.updatestatusonchat(msg.getmsgid(), Userid,LocalDateTime.now())
+                            // .flatMap(updmsg->{
+                            //     if(usersink.containsKey(updmsg.getSenderId())){
+                            //         ACKMessageDTO ack=new ACKMessageDTO();
+                            //         ack.setchatid(msg.getchatid());
+                            //         ack.setmsgid(msg.getmsgid());
+                            //         ack.setstatus("read");
+                            //         Sinks.Many<String> ack_sink=usersink.get(updmsg.getSenderId());
+                            //         return Mono.fromCallable(()->objectMapper.writeValueAsString(ack))
+                            //         .flatMap(ackjson->{
+                            //             ack_sink.tryEmitNext(ackjson);
+                            //             return Mono.empty();
+                            //         })
+                            //         .onErrorResume(e->{
+                            //             System.out.println(e);
+                            //             return Mono.empty();
+                            //         });
+                            //     }
+                            //     else{
+                            //         return Mono.empty();
+                            //     }
+                            // });
+                            return Mono.empty();
                         })
                         .onErrorResume(e->{
                             System.out.println(e);
@@ -291,7 +292,8 @@ public class MyWebSocketHandler implements WebSocketHandler{
                         chatmap.put(chatid,"active");
                         return chatmap;
                     });
-                    return messageTrackHistoryRepo.updateoncheckin(Userid,chatid,now)
+                    Integer space=Integer.parseInt(data.getmsgid());
+                    return messageTrackHistoryRepo.updateoncheckin(Userid,chatid,now,space)
                     .flatMap(msg->{
                         if(usersink.containsKey(msg.getSenderId())){
                             ACKMessageDTO ack=new ACKMessageDTO();
@@ -458,19 +460,41 @@ public class MyWebSocketHandler implements WebSocketHandler{
         }).then();
     }).then();
     }
-    public Mono<Void> announce(String Chatid,String purpose,String username){
+    public Mono<Void> announce(String Chatid,String purpose,String username,String admin,String adminid){
         String msgId="Msg-"+UUID.randomUUID().toString();
         LocalDateTime now=LocalDateTime.now();
+        System.out.println(adminid);
         String sender="server";
-        String contents=username+" "+purpose;
-        String Userid="AAA003";
-        
+        String contents;
+        String youcontent;
+        if(purpose=="added"){
+            contents=admin+" added "+username;
+            youcontent="You added "+username;
+        }
+        else if(purpose=="promote"){
+            contents=username+" is now an admin by "+admin;
+            youcontent=username+" is now an admin by You";
+        }
+        else if(purpose=="removed"){
+            contents=admin+" removed "+username;
+            youcontent="You removed "+username;
+        }
+        else if(purpose=="created"){
+            contents=admin+ " created "+username;
+            youcontent="You created "+username;
+        }
+        else{
+            contents=username +" left";
+            youcontent="You left";
+        }
+        String Userid=adminid;
+        System.out.println(contents);
         AtomicReference<String> status=new AtomicReference<>();
        // AtomicReference<LocalDateTime> deltime=new AtomicReference<>();
         status.set("pending");
-        return messageInfoRepo.insert(msgId, Chatid, Userid, "banner", contents, null, null, now,0)
+        return messageInfoRepo.insert(msgId, Chatid, Userid, "banner", contents+"/"+youcontent, null, null, now,0)
         .flatMap(info->{
-                    return userChatInfoRepo.findUserIds(Chatid, Userid)
+                    return userChatInfoRepo.findUserIds(Chatid, "AAA000")
                     .flatMap(userids->{
                         System.out.println(userids);
                         Sinks.Many<String> reciever_sink=usersink.get(userids);
@@ -478,8 +502,13 @@ public class MyWebSocketHandler implements WebSocketHandler{
                         SendingMessageDTO msg=new SendingMessageDTO();
                         msg.setmsgid(msgId);
                         msg.setchatid(Chatid);
-                        msg.settype("text");
-                        msg.setcontent(contents);
+                        msg.settype("banner");
+                        if(adminid.equals(userids)){
+                            msg.setcontent(youcontent);
+                        }
+                        else{
+                            msg.setcontent(contents);
+                        }                       
                         msg.setsendername(sender);
                         msg.settimestamp(now);
                         msg.setspaceid(0);
@@ -492,15 +521,18 @@ public class MyWebSocketHandler implements WebSocketHandler{
                                 reciever_sink.tryEmitNext(sendjson);
                               //status="delivered";
                               status.set("delivered");
-                              if(userstatus.get(userids)==null){
-                                userstatus.compute(Userid, (key,chatmap)->{
-                                    if(chatmap==null){
-                                        chatmap=new ConcurrentHashMap<>();
-                                    }
-                                    chatmap.put(Chatid,"in-active");
-                                    return chatmap;
-                                });
-                              }
+                            //   if(userstatus.get(userids)==null){
+                            //     userstatus.compute(Userid, (key,chatmap)->{
+                            //         if(chatmap==null){
+                            //             chatmap=new ConcurrentHashMap<>();
+                            //         }
+                            //         chatmap.put(Chatid,"in-active");
+                            //         return chatmap;
+                            //     });
+                            //   }
+                                userstatus.computeIfAbsent(userids, k -> new ConcurrentHashMap<>())
+                                .putIfAbsent(Chatid, "in-active");
+
                                 if(userstatus.get(userids).get(Chatid).equals("active")){
                                     
                                     //status="read";

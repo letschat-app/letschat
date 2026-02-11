@@ -71,7 +71,7 @@ SELECT distinct on (mi."MessageId")
             WHEN mi."SenderId" =:Userid THEN true
             ELSE (
                 SELECT CASE 
-                           WHEN mt2."Status" IN ('delivered', 'read') THEN true
+                           WHEN mt2."Status" IN ('read') THEN true
                            ELSE false
                        END
                 FROM "MessageTrackHistory" mt2
@@ -99,13 +99,14 @@ SELECT distinct on (mi."MessageId")
       mi."SpaceId" as spaceid
 
 FROM "MessageInfo" mi
+join "UserChat" uct on uct."ChatId"='AAA000' and uct."UserId"='AAA000'
 JOIN "MessageTrackHistory" mt ON mi."MessageId" = mt."MessageId"
-WHERE (mt."SenderId" = :Userid OR mt."RecieverId" = :Userid) and mi."ChatId"=(select "Id" from "UserChat" uc3 where uc3."ChatId"=:Chatid order by "Id"asc limit 1) order by mi."MessageId" ,mi."Time" asc
+WHERE (mt."SenderId" = :Userid OR mt."RecieverId" = :Userid) and mi."ChatId"=(select "Id" from "UserChat" uc3 where uc3."ChatId"=:Chatid order by "Id"asc limit 1) and mi."Time">=uct."At" order by mi."MessageId" ,mi."Time" asc
     ) as latmsg order by timestamp asc;
 
             """)
             Flux<LoadMessageDTO> load(String Userid,String Chatid);
-
+            //add in error WHEN mt2."Status" IN ('delivered', 'read') THEN true in load
       @Query("""
           SELECT *
 FROM (

@@ -1,5 +1,7 @@
 package com.letschat.mvp_1.Controllers;
 
+import java.time.LocalDateTime;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.letschat.mvp_1.DTOs.LoadMessageDTO;
 import com.letschat.mvp_1.Models.AssignmentInfo;
 import com.letschat.mvp_1.Service.AssignmentService;
 import com.letschat.mvp_1.Service.ClassRoomService;
@@ -56,5 +59,14 @@ public class ClassRoomController {
     public Mono<ResponseEntity<AssignmentInfo>> post(@PathVariable Long id){
         return assignmentService.get(id)
         .map(assignment->ResponseEntity.ok(assignment));
+    }
+
+    @GetMapping("count")
+    public Mono<Integer> getcount(@RequestHeader String chatid,@RequestHeader LocalDateTime timestamp){
+        return classRoomService.getcount(chatid,timestamp);
+    }
+    @GetMapping("getlast")
+    public Mono<LoadMessageDTO> getlast(@RequestHeader String chatid,@RequestHeader LocalDateTime timestamp){
+        return classRoomService.getlast(chatid,timestamp);
     }
 }

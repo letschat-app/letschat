@@ -45,10 +45,10 @@ and "RecieverId"=:userid returning *
         @Query("""
 update "MessageTrackHistory" mt set "Status"='read',"ReadTime"=:time from "MessageInfo" mc join (select * from "UserChat" 
 where "ChatId"=:chatid order by "Id" asc limit 1) uc on mc."ChatId"=uc."Id" 
-where mt."RecieverId"=:userid and (mt."Status"='delivered' or mt."Status"='pending')
+where mt."MessageId"=mc."MessageId" and mt."RecieverId"=:userid and (mt."Status"='delivered' or mt."Status"='pending') and mc."SpaceId"=:space
  returning *
                         """)
-        Flux<MessageTrackHistory> updateoncheckin(String userid,String chatid,LocalDateTime time);
+        Flux<MessageTrackHistory> updateoncheckin(String userid,String chatid,LocalDateTime time,Integer space);
 
         @Query("""
                         UPDATE "MessageTrackHistory"

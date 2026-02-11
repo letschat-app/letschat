@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
 
+import com.letschat.mvp_1.DTOs.LoadMessageDTO;
 import com.letschat.mvp_1.Models.ClassRoomInfo;
 import com.letschat.mvp_1.Repositories.ClassRoomRepo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
@@ -75,5 +76,13 @@ public class ClassRoomService {
 
             return String.format("%c%c%c%03d", first, second, third, digits);
         });
+    }
+
+
+    public Mono<Integer> getcount(String chatid,LocalDateTime time){
+        return classRoomRepo.getCountofClassRoomMessages(chatid, time);
+    }
+    public Mono<LoadMessageDTO> getlast(String chatid,LocalDateTime time){
+        return classRoomRepo.checknew(chatid, time);
     }
 }

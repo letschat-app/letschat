@@ -36,12 +36,12 @@ public interface GroupInfoRepo extends ReactiveCrudRepository<GroupInfoModel, St
             Flux<UserChatInfo> getMembers(String chatid);
 
     @Query("""
-            update "UserChat" set "Role"='admin' where "ChatId"=:chatid and "UserId"=:userid
+            update "UserChat" set "Role"='admin' where "ChatId"=:chatid and "UserId"=:userid returning *
             """)
             Mono<UserChatInfo> makeAdmin(String chatid,String userid);
 
     @Query("""
-            update "UserChat" set "Status"=:status where "ChatId"=:chatid and "UserId"=:userid
+            update "UserChat" set "Status"=:status where "ChatId"=:chatid and "UserId"=:userid returning *
             """)
             Mono<UserChatInfo> removeOrLeaveGroup(String status,String chatid,String userid);
 

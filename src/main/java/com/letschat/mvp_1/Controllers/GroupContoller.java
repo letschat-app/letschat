@@ -29,16 +29,16 @@ public class GroupContoller {
         this.groupAddService=groupAddService;
     }
 
-    @PostMapping("/create/{GroupName}")
-    public Mono<ResponseEntity<String>> creategroup(@PathVariable String GroupName,@RequestHeader("User-Id") String UserId){
+    @PostMapping("/create/{GroupName0}")
+    public Mono<ResponseEntity<String>> creategroup(@PathVariable String GroupName0,@RequestHeader("User-Id") String UserId,@RequestHeader("Group-Name") String GroupName){
         return groupCreateService.creategroup(UserId, GroupName)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed"))); 
     }
 
     @PostMapping("add/{GroupId}/{UserId}")
-    public Mono<ResponseEntity<String>> addtogroup(@PathVariable String GroupId,@PathVariable String UserId){
-        return groupAddService.addmember(GroupId, UserId)
+    public Mono<ResponseEntity<String>> addtogroup(@PathVariable String GroupId,@PathVariable String UserId,@RequestHeader("User-Name") String Admin,@RequestHeader("User-Id") String AdminId){
+        return groupAddService.addmember(GroupId, UserId, Admin,AdminId)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
     }
@@ -47,4 +47,20 @@ public class GroupContoller {
     public Mono<List<UserSearchResult>> getMembers(@PathVariable String Chatid){
         return groupCreateService.getMembers(Chatid).collectList();
     }
+
+    @PostMapping("promote/{chatid}/{UserId}")
+    public Mono<ResponseEntity<String>> makeAdmin(@PathVariable String chatid,@PathVariable String UserId,@RequestHeader("User-Name") String Admin,@RequestHeader("User-Id") String AdminId){
+        return groupAddService.makeAdmin(chatid, UserId, Admin,AdminId)
+        .map(message->ResponseEntity.ok(message))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
+    }
+
+    @PostMapping("remove/{Groupid}/{UserId}")
+    public Mono<ResponseEntity<String>> removeMember(@PathVariable String Groupid,@PathVariable String UserId,@RequestHeader("User-Name") String Admin,@RequestHeader("User-Id") String AdminId){
+        return groupAddService.removeMember(Groupid, UserId, Admin,AdminId)
+        .map(message->ResponseEntity.ok(message))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
+    }
+
+
 }

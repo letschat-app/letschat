@@ -9,6 +9,7 @@ import com.letschat.mvp_1.Repositories.GroupInfoRepo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
+import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -19,11 +20,13 @@ public class GroupCreateService {
     private final UserChatInfoRepo userChatInfoRepo;
     private final GroupInfoRepo groupInfoRepo;
     private final IdTableRepo idTableRepo;
-    public GroupCreateService(IdTableRepo idTableRepo,UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,GroupInfoRepo groupInfoRepo){
+    private final MyWebSocketHandler myWebSocketHandler;
+    public GroupCreateService(IdTableRepo idTableRepo,UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,GroupInfoRepo groupInfoRepo,MyWebSocketHandler myWebSocketHandler){
         this.userInfoRepo=userInfoRepo;
         this.userChatInfoRepo=userChatInfoRepo;
         this.groupInfoRepo=groupInfoRepo;
         this.idTableRepo=idTableRepo;
+        this.myWebSocketHandler=myWebSocketHandler;
     }
 
     public Mono<String> creategroup(String UserId,String GroupName){
@@ -37,7 +40,8 @@ public class GroupCreateService {
             .doOnNext(groupid->System.out.println("inside"+chat.getChatId()))
             .flatMap(groupid->{
                 return groupInfoRepo.insert(groupid, GroupName, user.getUserId(), chat.getId())
-                .thenReturn(chatid);
+                .then(myWebSocketHandler.announce(chatid,"created",GroupName,user.getPrivateName(),UserId))
+                .thenReturn(chatid+","+groupid);
             });})
             .doOnNext(chat->System.out.println("outside"+chat));
         }))
@@ -106,6 +110,8 @@ public class GroupCreateService {
         })
         .doOnNext(members->System.out.println(members.getUserName()));
     }
+
+    
     
 
 }

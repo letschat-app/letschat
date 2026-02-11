@@ -27,7 +27,7 @@ public class GroupAddService {
         this.classRoomRepo=classRoomRepo;
     }
 
-    public Mono<String> addmember(String GroupId,String UserId){
+    public Mono<String> addmember(String GroupId,String UserId,String AdminName,String AdminId){
         System.out.println("adding");
         LocalDateTime now=LocalDateTime.now();
         // return groupInfoRepo.findByGroupId(GroupId)
@@ -62,7 +62,7 @@ public class GroupAddService {
                     //     now,
                     //     "group"
                     // )
-                    myWebSocketHandler.announce(chat.getChatId(), "added", user.getPublicName())
+                    myWebSocketHandler.announce(chat.getChatId(), "added", user.getPublicName(),AdminName,AdminId)
                 )
                 .then(groupInfoRepo.updatemembers(GroupId, group.getNoOfMembers() + 1))
                 .thenReturn("added");
@@ -103,5 +103,36 @@ public class GroupAddService {
         .switchIfEmpty(Mono.just("classroom not exist"));
     }
 
+
+    public Mono<String> makeAdmin(String chatid,String userid,String adminName,String adminid){
+        return groupInfoRepo.makeAdmin(chatid, userid)
+        .flatMap(chat->{
+            return userChatInfoRepo.getInfo(chatid, userid)
+            .flatMap(user->{
+                System.out.println("user "+user.getType());
+                 return myWebSocketHandler.announce(chatid, "promote", user.getUserName(), adminName,adminid)
+            .thenReturn("ok");
+            });
+        })
+        .switchIfEmpty(Mono.just("error"));
+    }
+    
+    public Mono<String> removeMember(String GroupId,String UserId,String AdminName,String adminid){
+        return groupInfoRepo.findByGroupId(GroupId)
+        .flatMap(group->{
+            return userChatInfoRepo.findByChatId(group.getChatId())
+            .flatMap(chat->{
+                return userChatInfoRepo.getUserChat(chat.getChatId(), UserId)
+                .flatMap(userchat->{
+                    return myWebSocketHandler.announce(chat.getChatId(), "removed", userchat.getUserName(), AdminName,adminid)
+                    .then(userChatInfoRepo.updateStatus("removed",userchat.getChatId(),UserId))
+                    .then(groupInfoRepo.updatemembers(GroupId, group.getNoOfMembers() - 1))
+                    .thenReturn("ok");
+                });
+            });
+            
+            
+        });
+    }
     
 }

@@ -3,6 +3,8 @@ package com.letschat.mvp_1.DTOs;
 
 import java.time.LocalDateTime;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 public class LoadMessageDTO {
     private String msgid;
     private String chatid;
@@ -10,6 +12,7 @@ public class LoadMessageDTO {
     private String userid;
     private String type;
     private String content;
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime timestamp;
     private String repliedto;
     private String forwardedfrom;
