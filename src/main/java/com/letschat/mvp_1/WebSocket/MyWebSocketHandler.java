@@ -4,8 +4,8 @@ import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
-
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -23,6 +23,7 @@ import com.letschat.mvp_1.Repositories.MessageTrackHistoryRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
 
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
@@ -46,6 +47,10 @@ public class MyWebSocketHandler implements WebSocketHandler{
     private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> userstatus=new ConcurrentHashMap<>();
     private final Map<String,String>userid=new ConcurrentHashMap<>();
     private final Map<String,Sinks.Many<String>>usersink=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> username=new ConcurrentHashMap<>();
+    //chatid<userid,username>
+    private final ConcurrentHashMap<String, CopyOnWriteArrayList<String>> userchats = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> chatypes=new ConcurrentHashMap<>();
     @Override
     public Mono<Void> handle(WebSocketSession session){
         String sessionid=session.getId();
@@ -87,6 +92,106 @@ public class MyWebSocketHandler implements WebSocketHandler{
         .map(session::textMessage));
         return connect.then(Mono.when(recieve,send));
     }
+    public Mono<String> getusername(String chatId,String userId){
+        return Mono.defer(() -> {
+            ConcurrentHashMap<String, String> userMap = username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>());
+            String cachedUsername = userMap.get(userId);
+            if (cachedUsername != null) {
+                System.out.println("exist in cache"+userId);
+                return Mono.just(cachedUsername);
+            }
+            System.out.println("db call"+userId);
+            return userInfoRepo.findName(userId, chatId)
+            .doOnNext(name -> userMap.put(userId, name));
+        });
+    }
+
+public void updateUsernameCache(String chatId, String userId, String newName) {
+
+    username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>())
+            .put(userId, newName);
+}
+
+public void removeUsernameCache(String chatId, String userId) {
+
+    ConcurrentHashMap<String, String> map = username.get(chatId);
+
+    if (map != null) {
+        map.remove(userId);
+    }
+}
+public Flux<String> getUserIds(String chatId, String userId) {
+
+    return Flux.defer(() -> {
+
+        CopyOnWriteArrayList<String> cached = userchats.get(chatId);
+
+        if (cached != null) {
+            System.out.println(
+                "[CACHE HIT] chatId=" + chatId +
+                " sender=" + userId +
+                " cachedUsers=" + cached
+            );
+            return Flux.fromIterable(cached)
+                       .filter(id -> !id.equals(userId));
+        }
+
+        // DB returns Flux<String>
+        return userChatInfoRepo.findUserIds(chatId) // Flux<String>
+                .collectList()                      // materialize ONCE
+                .map(CopyOnWriteArrayList::new)     // thread-safe cache
+                .doOnNext(listFromDb -> {
+                    System.out.println(
+                        "[DB RESULT] chatId=" + chatId +
+                        " usersFromDb=" + listFromDb
+                    );
+
+                    userchats.put(chatId, listFromDb);
+
+                    System.out.println(
+                        "[CACHE STORED] chatId=" + chatId +
+                        " cachedUsers=" + userchats.get(chatId)
+                    );
+                })
+                .flatMapMany(list ->
+                        Flux.fromIterable(list)
+                            .filter(id -> !id.equals(userId))
+                );
+    });
+}
+
+public void addUserToChatCache(String chatId, String userId) {
+
+    userchats.computeIfAbsent(chatId, k -> new CopyOnWriteArrayList<>())
+             .addIfAbsent(userId);
+}
+
+public void removeUserFromChatCache(String chatId, String userId) {
+
+    CopyOnWriteArrayList<String> users = userchats.get(chatId);
+
+    if (users != null) {
+        users.remove(userId);
+
+        if (users.isEmpty()) {
+            userchats.remove(chatId);
+        }
+    }
+}
+
+
+    public Mono<String> getType(String chatid){
+        return Mono.defer(()->{
+            String type=chatypes.get(chatid);
+            if(type != null){
+                return Mono.just(type);
+            }
+
+            return userChatInfoRepo.findTypeByChatId(chatid)
+            .doOnNext(type1->chatypes.putIfAbsent(chatid,type1));
+        });
+    }
+
     public Mono<Void> onrecieve(String sessionid,String json){
 
         return Mono.fromCallable(()->objectMapper.readValue(json,ReceivingMessageDTO.class))
@@ -105,9 +210,10 @@ public class MyWebSocketHandler implements WebSocketHandler{
             System.out.println(ChatId+"="+Userid+":"+data.gettimestamp());
             return messageInfoRepo.insert(msgId, ChatId, Userid, data.gettype(), data.getcontent(), data.getrepliedto(), data.getforwardedfrom(), data.gettimestamp(),data.getspaceid())
             .flatMap(info->{
-                return userChatInfoRepo.findTypeByChatId(ChatId)
+                return getType(ChatId)//userChatInfoRepo.findTypeByChatId(ChatId)
                 .flatMap(type->{
                     if("classroom".equals(type)){
+                        System.out.println("inside classroom");
                         ACKMessageDTO ack=new ACKMessageDTO();
                             ack.setchatid(ChatId);
                             ack.settempmsgid(data.gettempmsgid());
@@ -119,9 +225,10 @@ public class MyWebSocketHandler implements WebSocketHandler{
                             } catch (JsonProcessingException e) {
                                 System.out.println("in ack"+e);
                             }
-                        return userInfoRepo.findName(Userid,ChatId)
+                        return getusername(ChatId,Userid)//userInfoRepo.findName(Userid, ChatId)
+                        //return userInfoRepo.findName(Userid, ChatId)
                         .flatMap(username->{
-                            return userChatInfoRepo.findUserIds(ChatId,Userid)
+                            return getUserIds(ChatId,Userid)//userChatInfoRepo.findUserIds(ChatId,Userid)
                             .flatMap(userids->{
                                 Sinks.Many<String> reciever_sink=usersink.get(userids);
                                 SendingMessageDTO msg=new SendingMessageDTO();
@@ -145,10 +252,11 @@ public class MyWebSocketHandler implements WebSocketHandler{
                             }).then();
                         }).then();
                     }
-                return userInfoRepo.findName(Userid,ChatId)
-                .doOnNext(username->System.out.println(username))
+                return getusername(ChatId,Userid)//userInfoRepo.findName(userId, chatId)
+                //return userInfoRepo.findName(Userid, ChatId)
                 .flatMap(username->{
-                    return userChatInfoRepo.findUserIds(ChatId, Userid)
+                    return getUserIds(ChatId,Userid)//userChatInfoRepo.findUserIds(ChatId,Userid)
+                    //return userChatInfoRepo.findUserIds(ChatId,Userid)
                     .flatMap(userids->{
                         System.out.println(userids);
                         Sinks.Many<String> reciever_sink=usersink.get(userids);
@@ -217,7 +325,8 @@ public class MyWebSocketHandler implements WebSocketHandler{
        // String Chatid;
         return Mono.fromCallable(()->objectMapper.readValue(json,ChatUpdateDTO.class))
             .flatMap(data->{
-                return userChatInfoRepo.findTypeByChatId(data.getuserchatid())
+                return getType(data.getuserchatid())
+                //return userChatInfoRepo.findTypeByChatId(data.getuserchatid())
                 .flatMap(type->{
                 System.out.println(data.getpurpose());
                 System.out.println(data.getuserchatid());
@@ -494,7 +603,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
         status.set("pending");
         return messageInfoRepo.insert(msgId, Chatid, Userid, "banner", contents+"/"+youcontent, null, null, now,0)
         .flatMap(info->{
-                    return userChatInfoRepo.findUserIds(Chatid, "AAA000")
+                    return getUserIds(Chatid,null)
                     .flatMap(userids->{
                         System.out.println(userids);
                         Sinks.Many<String> reciever_sink=usersink.get(userids);

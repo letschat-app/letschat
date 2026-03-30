@@ -52,16 +52,10 @@ public class GroupAddService {
                         "group",
                         "member"
                     )
+                .then(Mono.fromRunnable(() ->
+                    myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
+                ))
                 .then(
-                    // userChatInfoRepo.insert(
-                    //     chat.getChatId(),
-                    //     user.getUserId(),
-                    //     group.getGroupName(),
-                    //     user.getPublicName(),
-                    //     now,
-                    //     now,
-                    //     "group"
-                    // )
                     myWebSocketHandler.announce(chat.getChatId(), "added", user.getPublicName(),AdminName,AdminId)
                 )
                 .then(groupInfoRepo.updatemembers(GroupId, group.getNoOfMembers() + 1))
@@ -94,7 +88,9 @@ public class GroupAddService {
                         "classroom",
                         "student"
                     )
-                
+                .then(Mono.fromRunnable(() ->
+                    myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
+                ))
                 .then(classRoomRepo.updateCount(RoomId, room.getNoOfStudents() + 1).then())
                 .thenReturn(chat.getChatId()));
                 });
@@ -125,6 +121,9 @@ public class GroupAddService {
                 return userChatInfoRepo.getUserChat(chat.getChatId(), UserId)
                 .flatMap(userchat->{
                     return myWebSocketHandler.announce(chat.getChatId(), "removed", userchat.getUserName(), AdminName,adminid)
+                    .then(Mono.fromRunnable(() ->
+                        myWebSocketHandler.removeUserFromChatCache(chat.getChatId(), UserId)
+                    ))                   
                     .then(userChatInfoRepo.updateStatus("removed",userchat.getChatId(),UserId))
                     .then(groupInfoRepo.updatemembers(GroupId, group.getNoOfMembers() - 1))
                     .thenReturn("ok");

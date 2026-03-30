@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -24,11 +25,16 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.letschat.mvp_1.DTOs.PostFeedDTO;
 import com.letschat.mvp_1.DTOs.PostUploadDTO;
+import com.letschat.mvp_1.DTOs.UploadUrlRequest;
+import com.letschat.mvp_1.DTOs.UploadUrlResponse;
+import com.letschat.mvp_1.Models.MediaInfo;
+import com.letschat.mvp_1.Service.MediaSaveService;
 import com.letschat.mvp_1.Service.MediaService;
 import com.letschat.mvp_1.Service.PostFeedService;
 import com.letschat.mvp_1.Service.PostUpload;
 import com.letschat.mvp_1.Service.ProfileService;
 import com.letschat.mvp_1.Service.StreamService;
+import com.letschat.mvp_1.Service.UploadMediaService;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -44,12 +50,16 @@ public class MediaController {
     private final PostFeedService postFeedService;
     private final StreamService streamService;
     private final MediaService mediaService;
-    public MediaController(ProfileService profileService,PostUpload postUpload,PostFeedService postFeedService,StreamService streamService,MediaService mediaService){
+    private final UploadMediaService uploadMediaService;
+    private final MediaSaveService mediaSaveService;
+    public MediaController(ProfileService profileService,PostUpload postUpload,PostFeedService postFeedService,StreamService streamService,MediaService mediaService,UploadMediaService uploadMediaService,MediaSaveService mediaSaveService){
         this.profileService=profileService;
         this.postUpload=postUpload;
         this.postFeedService=postFeedService;
         this.streamService=streamService;
         this.mediaService=mediaService;
+        this.uploadMediaService=uploadMediaService;
+        this.mediaSaveService=mediaSaveService;
     }
     @PostMapping("/uploads")
     public Mono<ResponseEntity<String>> uploads(@RequestPart("file") Mono<FilePart> fileMono){
@@ -133,5 +143,20 @@ public class MediaController {
         String range=headers.getFirst(HttpHeaders.RANGE);
         
         return streamService.stream(filename,range);
+    }
+
+    @PostMapping("/put-url")
+    public Mono<UploadUrlResponse> getPutUrl(
+            @RequestBody UploadUrlRequest request) {
+
+        return Mono.fromSupplier(() ->
+                uploadMediaService.generateUploadUrls(request.getMime())
+        );
+    }
+
+    @PostMapping("/set-url")
+    public Mono<Long> setMedia(@RequestBody MediaInfo info){
+        return mediaSaveService.insert(info)
+        .flatMap(id->Mono.just(id));
     }
 }

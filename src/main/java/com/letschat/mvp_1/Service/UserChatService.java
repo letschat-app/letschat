@@ -10,6 +10,7 @@ import com.letschat.mvp_1.Models.UserInfo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
+import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
 import reactor.core.publisher.Mono;
 
@@ -18,10 +19,12 @@ public class UserChatService {
     private final UserInfoRepo userInfoRepo;
     private final UserChatInfoRepo userChatInfoRepo;
     private final IdTableRepo idTableRepo;
-    public UserChatService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,IdTableRepo idTableRepo){
+    private final MyWebSocketHandler myWebSocketHandler;
+    public UserChatService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,IdTableRepo idTableRepo,MyWebSocketHandler myWebSocketHandler){
         this.userInfoRepo=userInfoRepo;
         this.userChatInfoRepo=userChatInfoRepo;
         this.idTableRepo=idTableRepo;
+        this.myWebSocketHandler=myWebSocketHandler;
     }
 
     // public Mono<String> addchat1(String SenderId,String RecieverId){
@@ -137,19 +140,40 @@ public class UserChatService {
             return Mono.just(User);
         });
     }
-    public Mono<String> updateInfo(UserSearchResult info,String Chatid){
-        return userChatInfoRepo.findTypeByChatId(Chatid)
-        .flatMap(type->{
+public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
+
+    return userChatInfoRepo.findTypeByChatId(Chatid)
+        .flatMap(type -> {
+
             System.out.println(info.getUserName());
             System.out.println(type);
-            if(type=="private"){
-                return userChatInfoRepo.updateUsername(info.getUserName(),Chatid,info.getUserId())
-                .then(userChatInfoRepo.updateChatname(info.getUserName(),Chatid,info.getUserId())).thenReturn("ok");
-            }
-            else{
-                return userChatInfoRepo.updateUsername(info.getUserName(),Chatid,info.getUserId()).thenReturn("ok");
+
+            Mono<Void> updateUsername =
+                userChatInfoRepo.updateUsername(info.getUserName(), Chatid, info.getUserId())
+                .then(Mono.fromRunnable(() ->
+                    myWebSocketHandler.updateUsernameCache(
+                        Chatid,
+                        info.getUserId(),
+                        info.getUserName()
+                    )
+                ));
+
+            if ("private".equals(type)) {
+
+                return updateUsername
+                        .then(userChatInfoRepo.updateChatname(
+                            info.getUserName(),
+                            Chatid,
+                            info.getUserId()
+                        ))
+                        .thenReturn("ok");
+
+            } else {
+
+                return updateUsername
+                        .thenReturn("ok");
             }
         })
         .switchIfEmpty(Mono.just("failed"));
-    }
+}
 }
