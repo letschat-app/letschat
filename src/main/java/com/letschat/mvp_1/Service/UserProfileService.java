@@ -1,6 +1,5 @@
 package com.letschat.mvp_1.Service;
 
-import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Component;
 
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
@@ -16,14 +15,9 @@ public class UserProfileService {
         this.profileService=profileService;
     }
 
-    public Mono<String> upload(FilePart file,String UserId){
-       // System.out.println("outer");
-        return profileService.upload(file)
-        .flatMap(filename->{
-          //  System.out.println(filename+","+UserId);
-            return userInfoRepo.updateprofile(filename, UserId)
-            .thenReturn(filename);
-        })
+    public Mono<String> upload(String mediaId,String UserId){
+        return userInfoRepo.updateprofile(mediaId, UserId)
+        .flatMap(info->Mono.just("success "+info.getUserProfilePath()))
         .switchIfEmpty(Mono.just("failed"));
     }
 }

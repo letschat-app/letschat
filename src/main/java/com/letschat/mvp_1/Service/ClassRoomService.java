@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
 
+import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
 import com.letschat.mvp_1.DTOs.LoadMessageDTO;
 import com.letschat.mvp_1.Models.ClassRoomInfo;
 import com.letschat.mvp_1.Repositories.ClassRoomRepo;
@@ -33,7 +34,7 @@ public class ClassRoomService {
         .flatMap(user -> generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            return userChatInfoRepo.insert(chatid, user.getUserId(), roomname, user.getPrivateName(), now, now,"classroom","faculty")
+            return userChatInfoRepo.insert(chatid, user.getUserId(), roomname, user.getPrivateName(), now, now,"classroom","faculty",null,user.getUserProfilePath())
             .flatMap(chat-> generateRoomId()
             .doOnNext(roomid->System.out.println("inside"+chat.getChatId()))
             .flatMap(roomid->{
@@ -49,6 +50,11 @@ public class ClassRoomService {
             ).doOnNext(chat->System.out.println("outside"+chat));
         }))
         .switchIfEmpty(Mono.just("failed"));
+    }
+
+    public Mono<String> update(String GroupId,ChatBoxReturnDTO info){
+        return classRoomRepo.update(info.getChatName(), info.getProfile(), GroupId)
+        .flatMap(info1->Mono.just("updated"));
     }
 
     public Mono<String> generateChatId(){

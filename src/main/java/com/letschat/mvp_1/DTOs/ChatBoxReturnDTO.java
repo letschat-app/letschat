@@ -13,9 +13,10 @@ public class ChatBoxReturnDTO {
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime timestamp;
     private String Role;
+    private String Profile;
 
     public ChatBoxReturnDTO(){}
-    public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role){
+    public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role,String Profile){
         this.ChatId=ChatId;
         this.Id=Id;
         this.ChatName=ChatName;
@@ -23,6 +24,7 @@ public class ChatBoxReturnDTO {
         this.Status=Status;
         this.timestamp=timestamp;
         this.Role=Role;
+        this.Profile=Profile;
     }
 
     public String getChatId(){
@@ -72,5 +74,12 @@ public class ChatBoxReturnDTO {
     }
     public void setRole(String Role){
         this.Role=Role;
+    }
+
+    public String getProfile(){
+        return Profile;
+    }
+    public void setProfile(String Profile){
+        this.Profile=Profile;
     }
 }

@@ -3,9 +3,10 @@ package com.letschat.mvp_1.Models;
 import java.time.Instant;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
-@Table("MediaInfo")
+@Table("\"MediaInfo\"")
 public class MediaInfo {
 
     @Id
@@ -14,6 +15,7 @@ public class MediaInfo {
     private String fileType;
     private String mimeType;
     private String fileHash;
+    @Column("file_key")
     private String fileKey;
     private String thumbnailKey;
     private Long fileSize;

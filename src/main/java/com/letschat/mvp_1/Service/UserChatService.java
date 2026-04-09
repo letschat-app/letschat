@@ -90,8 +90,8 @@ public class UserChatService {
                 recievechat.setAt(now);
                 recievechat.setVisited(now);
 
-                return userChatInfoRepo.insert(chatid, SenderId, receiveuser.getPublicName(), senduser.getPublicName(), now, now,"private",null)
-                .then(userChatInfoRepo.insert(chatid, RecieverId, senduser.getPublicName(), receiveuser.getPublicName(), now, now,"private",null))
+                return userChatInfoRepo.insert(chatid, SenderId, receiveuser.getPublicName(), senduser.getPublicName(), now, now,"private",null,receiveuser.getUserProfilePath(),senduser.getUserProfilePath())
+                .then(userChatInfoRepo.insert(chatid, RecieverId, senduser.getPublicName(), receiveuser.getPublicName(), now, now,"private",null,senduser.getUserProfilePath(),receiveuser.getUserProfilePath()))
                 .thenReturn(chatid);
             }));
         });
@@ -137,6 +137,7 @@ public class UserChatService {
             User.setUserId(user.getUserId());
             User.setUserName(user.getUserName());
             User.setRole(user.getRole());
+            User.setProfile(user.getUserProfile());
             return Mono.just(User);
         });
     }
@@ -149,7 +150,7 @@ public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
             System.out.println(type);
 
             Mono<Void> updateUsername =
-                userChatInfoRepo.updateUsername(info.getUserName(), Chatid, info.getUserId())
+                userChatInfoRepo.updateUsername(info.getUserName(),info.getProfile(), Chatid, info.getUserId())
                 .then(Mono.fromRunnable(() ->
                     myWebSocketHandler.updateUsernameCache(
                         Chatid,
@@ -163,6 +164,7 @@ public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
                 return updateUsername
                         .then(userChatInfoRepo.updateChatname(
                             info.getUserName(),
+                            info.getProfile(),
                             Chatid,
                             info.getUserId()
                         ))

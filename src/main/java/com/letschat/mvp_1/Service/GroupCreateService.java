@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
 
+import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
 import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Repositories.GroupInfoRepo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
@@ -35,7 +36,7 @@ public class GroupCreateService {
         .flatMap(user->generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, user.getPrivateName(), now, now,"group","admin")
+            return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, user.getPrivateName(), now, now,"group","admin",null,user.getUserProfilePath())
             .flatMap(chat->{ return generateGroupId()
             .doOnNext(groupid->System.out.println("inside"+chat.getChatId()))
             .flatMap(groupid->{
@@ -46,6 +47,11 @@ public class GroupCreateService {
             .doOnNext(chat->System.out.println("outside"+chat));
         }))
         .switchIfEmpty(Mono.just("failed"));
+    }
+
+    public Mono<String> updategroup(String GroupId,ChatBoxReturnDTO info){
+        return groupInfoRepo.update(info.getChatName(), info.getProfile(), GroupId)
+        .flatMap(info1->Mono.just("updated"));
     }
 
     public Mono<String> generateGroupIdId(){

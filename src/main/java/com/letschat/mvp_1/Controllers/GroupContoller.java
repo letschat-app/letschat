@@ -7,10 +7,12 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
 import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Service.GroupAddService;
 import com.letschat.mvp_1.Service.GroupCreateService;
@@ -55,6 +57,12 @@ public class GroupContoller {
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
     }
 
+    @PostMapping("update/{Groupid}")
+    public Mono<ResponseEntity<String>> update(@PathVariable String Groupid,@RequestBody ChatBoxReturnDTO info){
+        return groupCreateService.updategroup(Groupid, info)
+        .map(message->ResponseEntity.ok(message))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
+    }
     @PostMapping("remove/{Groupid}/{UserId}")
     public Mono<ResponseEntity<String>> removeMember(@PathVariable String Groupid,@PathVariable String UserId,@RequestHeader("User-Name") String Admin,@RequestHeader("User-Id") String AdminId){
         return groupAddService.removeMember(Groupid, UserId, Admin,AdminId)

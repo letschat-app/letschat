@@ -12,7 +12,7 @@ public class ClassRoomInfo implements Persistable<String>{
     private String faculty;
     private Long noOfStudents;
     private String description;
-    private Long roomProfile;
+    private String roomProfile;
 
     @Override
     public String getId(){
@@ -28,7 +28,7 @@ public class ClassRoomInfo implements Persistable<String>{
 
     public ClassRoomInfo(String roomId, String roomName, Long chatId,
                    String faculty, Long noOfStudents,
-                   String description, Long roomProfile) {
+                   String description, String roomProfile) {
         this.roomId = roomId;
         this.roomName = roomName;
         this.chatId=chatId;
@@ -80,10 +80,10 @@ public class ClassRoomInfo implements Persistable<String>{
         this.description = description;
     }
 
-    public Long getRoomProfile() {
+    public String getRoomProfile() {
         return roomProfile;
     }
-    public void setRoomProfile(Long roomProfile) {
+    public void setRoomProfile(String roomProfile) {
         this.roomProfile = roomProfile;
     }
 }

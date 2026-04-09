@@ -50,7 +50,9 @@ public class GroupAddService {
                         now,
                         now,
                         "group",
-                        "member"
+                        "member",
+                        group.getGroupProfilePath(),
+                        user.getUserProfilePath()
                     )
                 .then(Mono.fromRunnable(() ->
                     myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
@@ -86,7 +88,9 @@ public class GroupAddService {
                         now,
                         now,
                         "classroom",
-                        "student"
+                        "student",
+                        null,
+                        user.getUserProfilePath()
                     )
                 .then(Mono.fromRunnable(() ->
                     myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)

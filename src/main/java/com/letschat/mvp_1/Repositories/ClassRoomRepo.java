@@ -79,4 +79,10 @@ ORDER BY mi."Time" Desc limit 1
 
                         """)
                         Mono<LoadMessageDTO> checknew(String chatid,LocalDateTime timestamp);
+
+
+      @Query("""
+          update "ClassRoomInfo" set "room_name"=:name , "room_profile"=:profile where "room_id"=:id returning *
+          """)
+          Mono<ClassRoomInfo> update(String name,String profile,String room_id);
 }

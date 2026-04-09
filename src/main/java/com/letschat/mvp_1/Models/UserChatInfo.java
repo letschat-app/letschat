@@ -29,9 +29,13 @@ public class UserChatInfo {
     private String Type;
     @Column("Role")
     private String Role;
+    @Column("ChatProfile")
+    private String ChatProfile;
+    @Column("UserProfile")
+    private String UserProfile;
 
     public UserChatInfo(){}
-    public UserChatInfo(Long Id,String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,String Status,LocalDateTime Visited,String Type,String Role){
+    public UserChatInfo(Long Id,String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,String Status,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile){
         this.Id=Id;
         this.ChatId=ChatId;
         this.UserId=UserId;
@@ -42,6 +46,8 @@ public class UserChatInfo {
         this.Visited=Visited;
         this.Type=Type;
         this.Role=Role;
+        this.ChatProfile=ChatProfile;
+        this.UserProfile=UserProfile;
     }
 
     public Long getId(){
@@ -112,6 +118,20 @@ public class UserChatInfo {
     }
     public void setRole(String Role){
         this.Role=Role;
+    }
+
+    public String getChatProfile(){
+        return ChatProfile;
+    }
+    public void setChatProfile(String ChatProfile){
+        this.ChatProfile=ChatProfile;
+    }
+
+    public String getUserProfile(){
+        return UserProfile;
+    }
+    public void setUserProfile(String UserProfile){
+        this.UserProfile=UserProfile;
     }
 
 }

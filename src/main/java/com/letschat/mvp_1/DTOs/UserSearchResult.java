@@ -4,12 +4,14 @@ public class UserSearchResult {
     private String UserId;
     private String UserName;
     private String Role;
+    private String Profile;
 
     public UserSearchResult(){}
-    public UserSearchResult(String UserId,String UserName,String Role){
+    public UserSearchResult(String UserId,String UserName,String Role,String Profile){
         this.UserId=UserId;
         this.UserName=UserName;
         this.Role=Role;
+        this.Profile=Profile;
     }
 
     public String getUserId(){
@@ -31,6 +33,13 @@ public class UserSearchResult {
     }
     public void setRole(String Role){
         this.Role=Role;
+    }
+
+    public String getProfile(){
+        return Profile;
+    }
+    public void setProfile(String Profile){
+        this.Profile=Profile;
     }
 
 }

@@ -3,7 +3,6 @@ package com.letschat.mvp_1.Controllers;
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -11,7 +10,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
@@ -93,11 +91,10 @@ public class UserController {
     }
 
     //@PostMapping(value="/profile/{UserId}",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PostMapping("/profile/{UserId}")
-    public Mono<ResponseEntity<String>> setprofile(@RequestPart("file") Mono<FilePart> fileMono,@PathVariable String UserId){
+    @PostMapping("/profile/{mediaId}")
+    public Mono<ResponseEntity<String>> setprofile(@RequestHeader("User-id") String UserId,@PathVariable String mediaId){
         System.out.println("profile"+UserId);
-        return fileMono
-        .flatMap(file->userProfileService.upload(file, UserId))
+        return userProfileService.upload(mediaId, UserId)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
     }

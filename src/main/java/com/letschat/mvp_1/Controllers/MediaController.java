@@ -4,6 +4,7 @@ package com.letschat.mvp_1.Controllers;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -155,8 +156,14 @@ public class MediaController {
     }
 
     @PostMapping("/set-url")
-    public Mono<Long> setMedia(@RequestBody MediaInfo info){
+    public Mono<Map<String, Long>> setMedia(@RequestBody MediaInfo info){
         return mediaSaveService.insert(info)
-        .flatMap(id->Mono.just(id));
+        .map(id -> Map.of("mediaId", id));
+    }
+
+    @GetMapping("/get-url/{id}")
+    public Mono<MediaInfo> getMedia(@PathVariable Long id){
+        return mediaSaveService.getMedia(id)
+        .flatMap(media->Mono.just(media));
     }
 }

@@ -18,6 +18,7 @@ import com.letschat.mvp_1.DTOs.ACKMessageDTO;
 import com.letschat.mvp_1.DTOs.ChatUpdateDTO;
 import com.letschat.mvp_1.DTOs.ReceivingMessageDTO;
 import com.letschat.mvp_1.DTOs.SendingMessageDTO;
+import com.letschat.mvp_1.Models.ScheduleMessage;
 import com.letschat.mvp_1.Repositories.MessageInfoRepo;
 import com.letschat.mvp_1.Repositories.MessageTrackHistoryRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
@@ -663,4 +664,78 @@ public void removeUserFromChatCache(String chatId, String userId) {
         }).then();
 
     }
+
+    public Mono<Void> send(ScheduleMessage msg) {
+
+    String msgId = "Msg-" + UUID.randomUUID();
+
+    return messageInfoRepo.insert(
+            msgId,
+            msg.getChatId(),
+            msg.getSenderId(),
+            msg.getMessageType(),
+            msg.getMessage(),
+            null,
+            null,
+            msg.getTime(),
+            msg.getMessageSpace()
+    )
+    .then(getusername(msg.getChatId(), msg.getSenderId()))
+    .flatMapMany(username ->
+        getUserIds(msg.getChatId(), msg.getSenderId())
+        .flatMap(uid -> {
+
+            String status = "pending";
+            LocalDateTime delTime = null;
+
+            Sinks.Many<String> receiverSink = usersink.get(uid);
+
+            SendingMessageDTO sendmsg = new SendingMessageDTO();
+            sendmsg.setmsgid(msgId);
+            sendmsg.setchatid(msg.getChatId());
+            sendmsg.setsendername(username);
+            sendmsg.settype(msg.getMessageType());
+            sendmsg.setcontent(msg.getMessage());
+            sendmsg.settimestamp(msg.getTime());
+            sendmsg.setspaceid(msg.getMessageSpace());
+
+            String sendjson;
+
+            try {
+                sendjson = objectMapper.writeValueAsString(sendmsg);
+            } catch (Exception e) {
+                return Mono.error(e);
+            }
+
+            if (receiverSink != null) {
+
+                receiverSink.tryEmitNext(sendjson);
+
+                status = "delivered";
+                delTime = LocalDateTime.now();
+
+                userstatus
+                        .computeIfAbsent(uid, k -> new ConcurrentHashMap<>())
+                        .putIfAbsent(msg.getChatId(), "in-active");
+
+                if ("active".equals(
+                        userstatus
+                                .getOrDefault(uid, new ConcurrentHashMap<>())
+                                .get(msg.getChatId()))) {
+
+                    status = "read";
+                }
+            }
+
+            return messageTrackHistoryRepo.insert(
+                    msgId,
+                    msg.getSenderId(),
+                    uid,
+                    status,
+                    delTime
+            ).then();   // ignore returned entity
+        })
+    )
+    .then();
+}
 }
