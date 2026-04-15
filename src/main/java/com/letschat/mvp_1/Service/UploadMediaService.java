@@ -7,7 +7,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.letschat.mvp_1.DTOs.UploadUrlResponse;
+import com.letschat.mvp_1.Repositories.MediaRepo;
 
+import reactor.core.publisher.Mono;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
@@ -17,30 +19,33 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 public class UploadMediaService {
 
     private final S3Presigner presigner;
+    private final MediaRepo mediaRepo;
 
     @Value("${r2.bucket}")
     private String bucket;
 
-    public UploadMediaService(S3Presigner presigner) {
+    public UploadMediaService(S3Presigner presigner, MediaRepo mediaRepo) {
         this.presigner = presigner;
+        this.mediaRepo = mediaRepo;
     }
 
-    public static String resolve(String mime) {
+    public Mono<UploadUrlResponse> generateUploadUrls(String mime, String hash) {
 
-        if (mime.startsWith("image/"))
-            return "images";
-
-        if (mime.startsWith("video/"))
-            return "videos";
-
-        if (mime.startsWith("audio/"))
-            return "audio";
-
-        return "docs";
+        return mediaRepo.findByHash(hash)
+                .map(mediaId -> new UploadUrlResponse(
+                    true,
+                    null,   
+                    null,
+                    null,
+                    null,
+                    mediaId
+                ))
+                .switchIfEmpty(Mono.fromSupplier(() -> createNewUpload(mime)));
     }
 
-    public UploadUrlResponse generateUploadUrls(String mime) {
-        System.out.println(mime);
+
+    private UploadUrlResponse createNewUpload(String mime) {
+
         String folder = resolve(mime);
         String ext = extensionFromMime(mime);
         String uuid = UUID.randomUUID().toString();
@@ -57,8 +62,8 @@ public class UploadMediaService {
             String thumbMime = mime;
 
             if (folder.equals("videos")) {
-                thumbExt = ".png";
-                thumbMime = "image/png";
+                thumbExt = ".webp";
+                thumbMime = "image/webp";
             }
 
             thumbKey = folder + "/thumb/" + uuid + thumbExt;
@@ -66,10 +71,12 @@ public class UploadMediaService {
         }
 
         return new UploadUrlResponse(
+                false,
                 mainKey,
                 thumbKey,
                 mainUrl,
-                thumbUrl
+                thumbUrl,
+                null
         );
     }
 
@@ -92,6 +99,20 @@ public class UploadMediaService {
                 presigner.presignPutObject(presignRequest);
 
         return presignedRequest.url().toString();
+    }
+
+    public static String resolve(String mime) {
+
+        if (mime.startsWith("image/"))
+            return "images";
+
+        if (mime.startsWith("video/"))
+            return "videos";
+
+        if (mime.startsWith("audio/"))
+            return "audio";
+
+        return "docs";
     }
 
     public static String extensionFromMime(String mime) {

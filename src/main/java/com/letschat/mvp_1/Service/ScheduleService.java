@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import com.letschat.mvp_1.Models.ScheduleMessage;
 import com.letschat.mvp_1.Repositories.ScheduleRepo;
 
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 @Component
 public class ScheduleService {
@@ -20,6 +21,7 @@ public class ScheduleService {
     }
 
     public Mono<String> schedule(ScheduleMessage msg){
+        System.out.println("scheduling ");
         return scheduleRepo.save(msg)
         .flatMap(sch->Mono.just("success"))
         .switchIfEmpty(Mono.just("failed"));
@@ -33,6 +35,7 @@ public class ScheduleService {
 
     @Scheduled(cron = "0 * * * * *")
     public void process0() {
+        System.out.println("analyzing");
         scheduleRepo.findMesages()
         .flatMap(msg ->
             myWebSocketHandler
@@ -44,5 +47,13 @@ public class ScheduleService {
                 })
         , 16) 
         .subscribe();
+    }
+
+    public Flux<ScheduleMessage> getmsg(String userid ,String chatid){
+        return scheduleRepo.findAllByChatIdAndSenderId(chatid,userid);
+    }
+
+    public Mono<String> delete(Long id){
+        return scheduleRepo.deleteById(id).thenReturn("deleted");
     }
 }

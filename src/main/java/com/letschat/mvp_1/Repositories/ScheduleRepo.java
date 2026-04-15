@@ -13,5 +13,6 @@ public interface ScheduleRepo extends ReactiveCrudRepository<ScheduleMessage,Lon
             """)
     Flux<ScheduleMessage> findMesages();
 
+    Flux<ScheduleMessage> findAllByChatIdAndSenderId(String chatId,String senderId);
     
 }
