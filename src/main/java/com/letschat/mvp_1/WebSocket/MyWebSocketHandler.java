@@ -14,6 +14,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.letschat.mvp_1.NotificationService;
 import com.letschat.mvp_1.DTOs.ACKMessageDTO;
 import com.letschat.mvp_1.DTOs.ChatUpdateDTO;
 import com.letschat.mvp_1.DTOs.ReceivingMessageDTO;
@@ -36,7 +37,8 @@ public class MyWebSocketHandler implements WebSocketHandler{
     private final MessageTrackHistoryRepo messageTrackHistoryRepo;
     private final UserInfoRepo userInfoRepo;
     private final ObjectMapper objectMapper;
-    public MyWebSocketHandler(UserChatInfoRepo userChatInfoRepo,UserInfoRepo userInfoRepo,ObjectMapper objectMapper,MessageInfoRepo messageInfoRepo,MessageTrackHistoryRepo messageTrackHistoryRepo){
+    private final NotificationService notificationService;
+    public MyWebSocketHandler(UserChatInfoRepo userChatInfoRepo,UserInfoRepo userInfoRepo,ObjectMapper objectMapper,MessageInfoRepo messageInfoRepo,MessageTrackHistoryRepo messageTrackHistoryRepo,NotificationService notificationService){
         this.userChatInfoRepo=userChatInfoRepo;
         this.userInfoRepo=userInfoRepo;
         this.objectMapper=objectMapper;
@@ -44,6 +46,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         this.messageTrackHistoryRepo=messageTrackHistoryRepo;
         this.messageInfoRepo=messageInfoRepo;
+        this.notificationService=notificationService;
     }
     private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> userstatus=new ConcurrentHashMap<>();
     private final Map<String,String>userid=new ConcurrentHashMap<>();
@@ -52,6 +55,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
     //chatid<userid,username>
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<String>> userchats = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> chatypes=new ConcurrentHashMap<>();
+  //  private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
     @Override
     public Mono<Void> handle(WebSocketSession session){
         String sessionid=session.getId();
@@ -193,6 +197,8 @@ public void removeUserFromChatCache(String chatId, String userId) {
         });
     }
 
+
+
     public Mono<Void> onrecieve(String sessionid,String json){
 
         return Mono.fromCallable(()->objectMapper.readValue(json,ReceivingMessageDTO.class))
@@ -213,7 +219,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
             .flatMap(info->{
                 return getType(ChatId)//userChatInfoRepo.findTypeByChatId(ChatId)
                 .flatMap(type->{
-                    if("classroom".equals(type)){
+                    if("classroom".equals(type) || "room".equals(type)){
                         System.out.println("inside classroom");
                         ACKMessageDTO ack=new ACKMessageDTO();
                             ack.setchatid(ChatId);
@@ -238,6 +244,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
                                 msg.settype(data.gettype());
                                 msg.setcontent(data.getcontent());
                                 msg.setsendername(username);
+                                msg.setsenderid(Userid);
                                 msg.settimestamp(data.gettimestamp());
                                 msg.setrepliedto(data.getrepliedto());
                                 msg.setforwardedfrom(data.getforwardedfrom());
@@ -246,6 +253,12 @@ public void removeUserFromChatCache(String chatId, String userId) {
                                     String sendjson=objectMapper.writeValueAsString(msg);
                                     if(reciever_sink!=null){
                                         reciever_sink.tryEmitNext(sendjson);
+                                    }
+                                    else{
+                                        if(!"room".equals(type)){
+                                            String payload=data.getspaceid()+"/%20/"+data.gettype()+"/%20/"+username+"/%20/"+data.getcontent();
+                                            notificationService.notifyUser(userids,ChatId,username,payload,type).subscribe();
+                                        }
                                     }
                                 } catch (JsonProcessingException e) {
                                 }
@@ -269,6 +282,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
                         msg.settype(data.gettype());
                         msg.setcontent(data.getcontent());
                         msg.setsendername(username);
+                        msg.setsenderid(Userid);
                         msg.settimestamp(data.gettimestamp());
                         msg.setrepliedto(data.getrepliedto());
                         msg.setforwardedfrom(data.getforwardedfrom());
@@ -294,7 +308,9 @@ public void removeUserFromChatCache(String chatId, String userId) {
                                 deltime.set(LocalDateTime.now());
                             }
                             else{
-                                System.out.println("User is offline");
+                                System.out.println("User is offline");   
+                                String payload=data.getspaceid()+"/%20/"+data.gettype()+"/%20/"+username+"/%20/"+data.getcontent();
+                                notificationService.notifyUser(userids,ChatId,username,payload,type).subscribe();                               
                                 ack.setstatus("pending");
                             }
                             try {
@@ -331,10 +347,11 @@ public void removeUserFromChatCache(String chatId, String userId) {
                 .flatMap(type->{
                 System.out.println(data.getpurpose());
                 System.out.println(data.getuserchatid());
-                if("classroom".equals(type)){
+                if("classroom".equals(type) || "room".equals(type)){
                     if(data.getpurpose().equals("load")){
                         return messageInfoRepo.loadforroom(data.getuserchatid())
                         .flatMap(msg->{
+                            notificationService.clear(Userid, data.getuserchatid());
                             return Mono.fromCallable(()->objectMapper.writeValueAsString(msg))
                             .flatMap(msgjson->{
                                 sender_sink.tryEmitNext(msgjson);
@@ -383,6 +400,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
                             //         return Mono.empty();
                             //     }
                             // });
+                            notificationService.clear(Userid, data.getuserchatid());
                             return Mono.empty();
                         })
                         .onErrorResume(e->{
@@ -416,8 +434,8 @@ public void removeUserFromChatCache(String chatId, String userId) {
                                 //ack_sink.tryEmitNext(ackjson);
                                 try {
                                     ack_sink.emitNext(objectMapper.writeValueAsString(ackjson),
-                                    (signalType, emitResult) -> emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED
-                                );
+                                    (signalType, emitResult) -> emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED);
+                                    notificationService.clear(Userid, data.getuserchatid());
                                 } catch (JsonProcessingException e) {  
 
                                 }
@@ -668,7 +686,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
     public Mono<Void> send(ScheduleMessage msg) {
 
     String msgId = "Msg-" + UUID.randomUUID();
-
+        System.out.println("sedning scheduled");
     return messageInfoRepo.insert(
             msgId,
             msg.getChatId(),
@@ -678,11 +696,11 @@ public void removeUserFromChatCache(String chatId, String userId) {
             null,
             null,
             msg.getTime(),
-            msg.getMessageSpace()
+            msg.getSpaceId()
     )
     .then(getusername(msg.getChatId(), msg.getSenderId()))
     .flatMapMany(username ->
-        getUserIds(msg.getChatId(), msg.getSenderId())
+        getUserIds(msg.getChatId(), "null")
         .flatMap(uid -> {
 
             String status = "pending";
@@ -693,11 +711,14 @@ public void removeUserFromChatCache(String chatId, String userId) {
             SendingMessageDTO sendmsg = new SendingMessageDTO();
             sendmsg.setmsgid(msgId);
             sendmsg.setchatid(msg.getChatId());
-            sendmsg.setsendername(username);
+            if(!uid.equals(msg.getSenderId())){
+                sendmsg.setsendername(username);
+            }
+            sendmsg.setsenderid(msg.getSenderId());
             sendmsg.settype(msg.getMessageType());
             sendmsg.setcontent(msg.getMessage());
             sendmsg.settimestamp(msg.getTime());
-            sendmsg.setspaceid(msg.getMessageSpace());
+            sendmsg.setspaceid(msg.getSpaceId());
 
             String sendjson;
 
@@ -725,6 +746,15 @@ public void removeUserFromChatCache(String chatId, String userId) {
 
                     status = "read";
                 }
+                if(!uid.equals(msg.getSenderId())){
+                    ACKMessageDTO ack=new ACKMessageDTO();
+                    ack.setchatid(msg.getChatId());
+                    ack.setmsgid(msgId);
+                }
+
+            }else{
+                String payload=msg.getSpaceId()+"/%20/"+msg.getMessageType()+"/%20/"+username+"/%20/"+msg.getMessage();
+                notificationService.notifyUser(uid,msg.getChatId(),username,payload,null).subscribe();                                
             }
 
             return messageTrackHistoryRepo.insert(
