@@ -1,17 +1,28 @@
 package com.letschat.mvp_1.DTOs;
 
 public class UploadUrlResponse {
+    private Boolean exist;
     private String mainKey;
     private String thumbKey;
     private String mainPutUrl;
     private String thumbPutUrl;
+    private Long mediaId;
 
     public UploadUrlResponse(){}
-    public UploadUrlResponse(String mainKey,String thumbkey,String mainPutUrl,String thumbPutUrl){
+    public UploadUrlResponse(Boolean exist,String mainKey,String thumbkey,String mainPutUrl,String thumbPutUrl,Long mediaId){
+        this.exist=exist;
         this.mainKey=mainKey;
         this.thumbKey=thumbkey;
         this.mainPutUrl=mainPutUrl;
         this.thumbPutUrl=thumbPutUrl;
+        this.mediaId=mediaId;
+    }
+
+    public Boolean getExist(){
+        return exist;
+    }
+    public void setExist(Boolean exist){
+        this.exist=exist;
     }
 
     public String getMainKey() {
@@ -40,5 +51,12 @@ public class UploadUrlResponse {
     }
     public void setThumbPutUrl(String thumbPutUrl) {
         this.thumbPutUrl = thumbPutUrl;
+    }
+
+    public Long getMediaId(){
+        return mediaId;
+    }
+    public void setMediaId(Long mediaId){
+        this.mediaId=mediaId;
     }
 }

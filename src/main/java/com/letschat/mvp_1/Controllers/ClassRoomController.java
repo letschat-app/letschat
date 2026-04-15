@@ -23,7 +23,6 @@ import com.letschat.mvp_1.Service.GroupAddService;
 import com.letschat.mvp_1.Service.SubmissionService;
 
 import reactor.core.publisher.Mono;
-import org.springframework.web.bind.annotation.RequestParam;
 
 
 @CrossOrigin(originPatterns="*")
@@ -71,7 +70,7 @@ public class ClassRoomController {
     }
 
     @GetMapping("assignment/get/{id}")
-    public Mono<ResponseEntity<AssignmentInfo>> post(@PathVariable Long id){
+    public Mono<ResponseEntity<AssignmentInfo>> get(@PathVariable Long id){
         return assignmentService.get(id)
         .map(assignment->ResponseEntity.ok(assignment));
     }
@@ -88,7 +87,7 @@ public class ClassRoomController {
     }
 
     @GetMapping("submission/get/{id}")
-    public Mono<SubmissionInfo> getMethodName(@RequestParam Long id,@RequestHeader("user-id") String userid) {
+    public Mono<SubmissionInfo> getMethodName(@PathVariable Long id,@RequestHeader("User-Id") String userid) {
         return submissionService.getsubmission(id,userid);
     }
 

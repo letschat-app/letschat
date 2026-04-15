@@ -7,6 +7,7 @@ public class SendingMessageDTO {
     private String msgid;
     private String chatid;
     private String sendername;
+    private String senderid;
     private String type;
     private String content;
     private LocalDateTime timestamp;
@@ -15,10 +16,11 @@ public class SendingMessageDTO {
     private Integer spaceid;
 
     public SendingMessageDTO(){}
-    public SendingMessageDTO(Integer spaceid,String msgid,String chatid,String sendername,String type,String content,LocalDateTime timestamp,String repliedto,String forwardedfrom){
+    public SendingMessageDTO(Integer spaceid,String msgid,String chatid,String sendername,String senderid,String type,String content,LocalDateTime timestamp,String repliedto,String forwardedfrom){
         this.msgid=msgid;
         this.chatid=chatid;
         this.sendername=sendername;
+        this.senderid=senderid;
         this.type=type;
         this.content=content;
         this.timestamp=timestamp;
@@ -46,6 +48,13 @@ public class SendingMessageDTO {
     }
     public void setsendername(String sendername){
         this.sendername=sendername;
+    }
+
+    public String getsenderid(){
+        return senderid;
+    }
+    public void setsenderid(String senderid){
+        this.senderid=senderid;
     }
 
     public String gettype(){

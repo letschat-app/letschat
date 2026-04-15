@@ -71,10 +71,10 @@ public class ScheduleMessage {
         return mediaId;
     }
 
-    public void setMessageSpace(Integer space){
+    public void setSpaceId(Integer space){
         this.spaceId=space;
     }
-    public Integer getMessageSpace(){
+    public Integer getSpaceId(){
         return spaceId;
     }
 

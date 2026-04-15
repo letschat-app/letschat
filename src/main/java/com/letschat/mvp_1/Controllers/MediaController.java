@@ -150,9 +150,7 @@ public class MediaController {
     public Mono<UploadUrlResponse> getPutUrl(
             @RequestBody UploadUrlRequest request) {
 
-        return Mono.fromSupplier(() ->
-                uploadMediaService.generateUploadUrls(request.getMime())
-        );
+        return uploadMediaService.generateUploadUrls(request.getMime(), request.getHash());
     }
 
     @PostMapping("/set-url")

@@ -8,7 +8,7 @@ import org.springframework.data.relational.core.mapping.Table;
 @Table("\"SubmissionInfo\"")
 public class SubmissionInfo {
     @Id
-    private Long submissionid;
+    private Long submissionId;
     private long assignmentId;
     private String comment;
     private String content;
@@ -23,7 +23,7 @@ public class SubmissionInfo {
     // Parameterized Constructor
     public SubmissionInfo(Long submissionid, long assignmentId, String comment, String content, 
                           String userId, Instant timestamp, Long marks) {
-        this.submissionid = submissionid;
+        this.submissionId = submissionid;
         this.assignmentId = assignmentId;
         this.comment = comment;
         this.content = content;
@@ -34,12 +34,12 @@ public class SubmissionInfo {
 
     // Getters and Setters
 
-    public Long getSubmissionid() {
-        return submissionid;
+    public Long getSubmissionId() {
+        return submissionId;
     }
 
-    public void setSubmissionid(Long submissionid) {
-        this.submissionid = submissionid;
+    public void setSubmissionId(Long submissionid) {
+        this.submissionId = submissionid;
     }
 
     public long getAssignmentId() {
