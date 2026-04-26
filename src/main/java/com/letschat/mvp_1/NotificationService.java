@@ -3,6 +3,7 @@ package com.letschat.mvp_1;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
+import com.letschat.mvp_1.Repositories.AssignmentRepo;
 import com.letschat.mvp_1.Repositories.EventInfoRepo;
 import com.letschat.mvp_1.Repositories.FCMRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
@@ -37,11 +38,13 @@ public class NotificationService {
     private final FCMRepo fcmRepo;
     private final EventInfoRepo eventInfoRepo;
     private final UserChatInfoRepo userChatInfoRepo;
+    private final AssignmentRepo assignmentRepo;
 
-    public NotificationService(FCMRepo fcmRepo,EventInfoRepo eventInfoRepo,UserChatInfoRepo userChatInfoRepo) {
+    public NotificationService(FCMRepo fcmRepo,EventInfoRepo eventInfoRepo,UserChatInfoRepo userChatInfoRepo,AssignmentRepo assignmentRepo) {
         this.fcmRepo = fcmRepo;
         this.eventInfoRepo=eventInfoRepo;
         this.userChatInfoRepo=userChatInfoRepo;
+        this.assignmentRepo=assignmentRepo;
     }
 
     // ================= CHAT STATE =================
@@ -240,6 +243,39 @@ public class NotificationService {
                 );
     }
 
+   @Scheduled(cron = "0 0 8 * * *")
+public void assignmentMissingSummary() {
+
+    assignmentRepo.findMissingAssignments()
+            .flatMap(dto -> {
+
+                if (dto.getAssignmentIds() == null || dto.getAssignmentIds().isEmpty()) {
+                    return Mono.empty();
+                }
+
+                String k = dto.getUserId() + ":assignment:" + LocalDate.now();
+
+                if (!dedupCheck(k, 24 * 60 * 60 * 1000L)) {
+                    return Mono.empty();
+                }
+
+                return getTokens(dto.getUserId())
+                        .flatMap(token ->
+                                Mono.fromRunnable(() ->
+                                        sendAssignmentNotification(
+                                                token,
+                                                dto.getUserId(),
+                                                dto.getAssignmentIds()
+                                        )
+                                ).subscribeOn(Schedulers.boundedElastic())
+                        )
+                        .then();
+            })
+            .doOnError(e -> System.out.println("[ASSIGNMENT SUMMARY] error: " + e))
+            .onErrorResume(e -> Flux.empty())
+            .subscribe();
+}
+
     // ================= TOKEN SYNC (every 2 days) =================
     @Scheduled(cron = "0 0 0 */2 * *")
     public void syncTokens() {
@@ -362,6 +398,28 @@ public class NotificationService {
 
         } catch (Exception e) {
             System.out.println("[DAILY] error: " + e);
+        }
+    }
+
+    private void sendAssignmentNotification(String token,
+                                        String userId,
+                                        List<Long> assignmentIds) {
+        try {
+            Map<String, String> data = new HashMap<>();
+            data.put("type", "ASSIGNMENT_MISSING");
+            data.put("userId", userId);
+            data.put("assignments", objectMapper.writeValueAsString(assignmentIds));
+
+            FirebaseMessaging.getInstance()
+                .send(Message.builder()
+                        .putAllData(data)
+                        .setToken(token)
+                        .build());
+
+            System.out.println("[ASSIGNMENT] sent to " + userId);
+
+        } catch (Exception e) {
+            System.out.println("[ASSIGNMENT] error: " + e.getMessage());
         }
     }
 }
