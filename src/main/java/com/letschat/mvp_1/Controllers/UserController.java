@@ -150,6 +150,9 @@ public class UserController {
         return myWebSocketHandler.checkUserStatus(userids);
     }
     
-
+    @GetMapping("/wake-up")
+    public Mono<String> health(){
+        return Mono.just("server is running");
+    }
     
 }
