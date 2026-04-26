@@ -1,11 +1,14 @@
 package com.letschat.mvp_1.WebSocket;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -24,10 +27,12 @@ import com.letschat.mvp_1.Repositories.MessageInfoRepo;
 import com.letschat.mvp_1.Repositories.MessageTrackHistoryRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
+import com.letschat.mvp_1.Service.AdminService;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import reactor.core.scheduler.Schedulers;
 
 @Component
 public class MyWebSocketHandler implements WebSocketHandler{
@@ -38,7 +43,8 @@ public class MyWebSocketHandler implements WebSocketHandler{
     private final UserInfoRepo userInfoRepo;
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
-    public MyWebSocketHandler(UserChatInfoRepo userChatInfoRepo,UserInfoRepo userInfoRepo,ObjectMapper objectMapper,MessageInfoRepo messageInfoRepo,MessageTrackHistoryRepo messageTrackHistoryRepo,NotificationService notificationService){
+    private final AdminService adminService;
+    public MyWebSocketHandler(UserChatInfoRepo userChatInfoRepo,UserInfoRepo userInfoRepo,ObjectMapper objectMapper,MessageInfoRepo messageInfoRepo,MessageTrackHistoryRepo messageTrackHistoryRepo,NotificationService notificationService,AdminService adminService){
         this.userChatInfoRepo=userChatInfoRepo;
         this.userInfoRepo=userInfoRepo;
         this.objectMapper=objectMapper;
@@ -47,6 +53,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
         this.messageTrackHistoryRepo=messageTrackHistoryRepo;
         this.messageInfoRepo=messageInfoRepo;
         this.notificationService=notificationService;
+        this.adminService=adminService;
     }
     private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> userstatus=new ConcurrentHashMap<>();
     private final Map<String,String>userid=new ConcurrentHashMap<>();
@@ -58,63 +65,92 @@ public class MyWebSocketHandler implements WebSocketHandler{
   //  private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
     @Override
     public Mono<Void> handle(WebSocketSession session){
-        String sessionid=session.getId();
-        Sinks.Many<String> sink=Sinks.many().multicast().onBackpressureBuffer();
-        String qry=session.getHandshakeInfo().getUri().getQuery();
-        String id="dummy";
-        if(qry!=null && qry.contains("userid=")){
-            id=qry.split("userid=")[1];
-        }System.out.println("connected:"+id);
-        Sinks.Many<String> ifold=usersink.get(id);
-        if(ifold!=null){
-            System.out.println("removing old");
-            ifold.tryEmitComplete();
-        }
-        userid.put(sessionid, id);
-        usersink.put(id, sink);
-         System.out.println(userid.size()+","+usersink.size());
-        Mono<Void> connect=onconnect(id).then();
+            String sessionid = session.getId();
 
-        Mono<Void> recieve=session.receive()
-        .flatMap(msg->onrecieve(sessionid, msg.getPayloadAsText()))
-        .doOnError(err->System.out.println("error:"+err.getMessage()))
-        .doFinally(status->{
-            String uid=userid.remove(sessionid);
-            System.out.println(userid.size());
-            Sinks.Many<String> old=usersink.remove(uid);          
-            if(old!=null){
-                old.tryEmitComplete();
-                System.out.println("closed");
+            Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
+
+            String qry = session.getHandshakeInfo().getUri().getQuery();
+            String id = null;
+            if (qry != null && qry.contains("userid=")) {
+                id = qry.split("userid=")[1].split("&")[0];
             }
+
+            if (id == null) {
+                return session.close(); // avoid dummy user
+            }
+
+            System.out.println("connected:" + id);
+
+            usersink.compute(id, (key, oldSink) -> {
+                if (oldSink != null) {
+                System.out.println("removing old");
+                oldSink.tryEmitComplete();
+            }
+            return sink;
+        });
+        adminService.onUserConnected(id);
+        userid.put(sessionid, id);
+
+        System.out.println(userid.size() + "," + usersink.size());
+
+        Mono<Void> connect = onconnect(id).then();
+
+        Mono<Void> recieve = session.receive()
+        .flatMap(msg -> onrecieve(sessionid, msg.getPayloadAsText()))
+        .doOnError(err -> System.out.println("error:" + err.getMessage()))
+        .doFinally(status -> {
+            String uid = userid.remove(sessionid);
+            System.out.println(userid.size());
+            adminService.onUserDisconnected(uid);
+            // FIX 4: remove only if it's same sink
+            usersink.computeIfPresent(uid, (key, currentSink) -> {
+                if (currentSink == sink) {
+                    currentSink.tryEmitComplete();
+                    System.out.println("closed");
+                    return null;
+                }
+                return currentSink;
+            });
+
             System.out.println("removed");
         })
         .then();
 
-        Mono<Void> send=session.send(sink.asFlux()
-        .doOnSubscribe(sub->System.out.println("to send "+userid.get(sessionid)))
-        .doOnCancel(()->System.out.println("to cancel "+userid.get(sessionid)))
-        .doOnNext(msg->System.out.println("sedning to"+userid+msg))
-        .map(session::textMessage));
+        Mono<Void> send = session.send(
+        sink.asFlux()
+            .doOnSubscribe(sub -> System.out.println("to send " + userid.get(sessionid)))
+            .doOnCancel(() -> System.out.println("to cancel " + userid.get(sessionid)))
+            .doOnNext(msg -> System.out.println("sending to " + userid.get(sessionid) + " : " + msg))
+            .map(session::textMessage)
+        );
         return connect.then(Mono.when(recieve,send));
     }
     public Mono<String> getusername(String chatId,String userId){
+        System.out.println(chatId+userId);
         return Mono.defer(() -> {
             ConcurrentHashMap<String, String> userMap = username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>());
             String cachedUsername = userMap.get(userId);
             if (cachedUsername != null) {
-                System.out.println("exist in cache"+userId);
+                System.out.println("exist in cache"+cachedUsername);
                 return Mono.just(cachedUsername);
             }
             System.out.println("db call"+userId);
-            return userInfoRepo.findName(userId, chatId)
-            .doOnNext(name -> userMap.put(userId, name));
+            return userChatInfoRepo.getUsername(chatId,userId)
+            .doOnNext(name -> {userMap.put(userId, name);System.out.println(name);});
         });
     }
 
+public Mono<Map<String,Boolean>> checkUserStatus(List<String> userids){
+    return Mono.just(userids.stream() .collect(Collectors.toMap( id -> id, usersink::containsKey )));
+}
+
 public void updateUsernameCache(String chatId, String userId, String newName) {
 
-    username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>())
-            .put(userId, newName);
+    // username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>())
+    //         .put(userId, newName);
+    Map<String, String> chatMap = username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>());
+    String oldName = chatMap.put(userId, newName);
+    this.announce(chatId, "change", oldName, newName, userId);
 }
 
 public void removeUsernameCache(String chatId, String userId) {
@@ -199,144 +235,178 @@ public void removeUserFromChatCache(String chatId, String userId) {
 
 
 
-    public Mono<Void> onrecieve(String sessionid,String json){
+public Mono<Void> onrecieve(String sessionId, String json) {
 
-        return Mono.fromCallable(()->objectMapper.readValue(json,ReceivingMessageDTO.class))
-        .flatMap(data->{
-            if(data.getchatid()==null){
-                return Mono.error(new RuntimeException());
+    return Mono.fromCallable(() -> objectMapper.readValue(json, ReceivingMessageDTO.class))
+        .subscribeOn(Schedulers.boundedElastic())
+        .flatMap(data -> {
+
+            if (data.getchatid() == null) {
+                return Mono.error(new RuntimeException("ChatId is null"));
             }
-            String msgId="Msg-"+UUID.randomUUID().toString();
-            AtomicReference<String> status=new AtomicReference<>();
-            AtomicReference<LocalDateTime> deltime=new AtomicReference<>();
-            System.out.println("onrecieve");
-           // ReceivingMessageDTO data=objectMapper.readValue(json, ReceivingMessageDTO.class);
-            String ChatId=data.getchatid();
-            String Userid=userid.get(sessionid);
-            Sinks.Many<String> sender_sink=usersink.get(Userid);
-            System.out.println(ChatId+"="+Userid+":"+data.gettimestamp());
-            return messageInfoRepo.insert(msgId, ChatId, Userid, data.gettype(), data.getcontent(), data.getrepliedto(), data.getforwardedfrom(), data.gettimestamp(),data.getspaceid())
-            .flatMap(info->{
-                return getType(ChatId)//userChatInfoRepo.findTypeByChatId(ChatId)
-                .flatMap(type->{
-                    if("classroom".equals(type) || "room".equals(type)){
-                        System.out.println("inside classroom");
-                        ACKMessageDTO ack=new ACKMessageDTO();
-                            ack.setchatid(ChatId);
-                            ack.settempmsgid(data.gettempmsgid());
-                            ack.setmsgid(msgId);
-                            ack.setstatus("read");
-                            try {
-                                String ackjson=objectMapper.writeValueAsString(ack);
-                                sender_sink.tryEmitNext(ackjson);
-                            } catch (JsonProcessingException e) {
-                                System.out.println("in ack"+e);
-                            }
-                        return getusername(ChatId,Userid)//userInfoRepo.findName(Userid, ChatId)
-                        //return userInfoRepo.findName(Userid, ChatId)
-                        .flatMap(username->{
-                            return getUserIds(ChatId,Userid)//userChatInfoRepo.findUserIds(ChatId,Userid)
-                            .flatMap(userids->{
-                                Sinks.Many<String> reciever_sink=usersink.get(userids);
-                                SendingMessageDTO msg=new SendingMessageDTO();
-                                msg.setmsgid(msgId);
-                                msg.setchatid(ChatId);
-                                msg.settype(data.gettype());
-                                msg.setcontent(data.getcontent());
-                                msg.setsendername(username);
-                                msg.setsenderid(Userid);
-                                msg.settimestamp(data.gettimestamp());
-                                msg.setrepliedto(data.getrepliedto());
-                                msg.setforwardedfrom(data.getforwardedfrom());
-                                msg.setspaceid(data.getspaceid());
-                                try {
-                                    String sendjson=objectMapper.writeValueAsString(msg);
-                                    if(reciever_sink!=null){
-                                        reciever_sink.tryEmitNext(sendjson);
-                                    }
-                                    else{
-                                        if(!"room".equals(type)){
-                                            String payload=data.getspaceid()+"/%20/"+data.gettype()+"/%20/"+username+"/%20/"+data.getcontent();
-                                            notificationService.notifyUser(userids,ChatId,username,payload,type).subscribe();
-                                        }
-                                    }
-                                } catch (JsonProcessingException e) {
-                                }
-                                return Mono.empty();
-                            }).then();
-                        }).then();
-                    }
-                return getusername(ChatId,Userid)//userInfoRepo.findName(userId, chatId)
-                //return userInfoRepo.findName(Userid, ChatId)
-                .flatMap(username->{
-                    return getUserIds(ChatId,Userid)//userChatInfoRepo.findUserIds(ChatId,Userid)
-                    //return userChatInfoRepo.findUserIds(ChatId,Userid)
-                    .flatMap(userids->{
-                        System.out.println(userids);
-                        Sinks.Many<String> reciever_sink=usersink.get(userids);
-                        status.set("pending");
-                        deltime.set(null);
-                        SendingMessageDTO msg=new SendingMessageDTO();
-                        msg.setmsgid(msgId);
-                        msg.setchatid(ChatId);
-                        msg.settype(data.gettype());
-                        msg.setcontent(data.getcontent());
-                        msg.setsendername(username);
-                        msg.setsenderid(Userid);
-                        msg.settimestamp(data.gettimestamp());
-                        msg.setrepliedto(data.getrepliedto());
-                        msg.setforwardedfrom(data.getforwardedfrom());
-                        msg.setspaceid(data.getspaceid());
-                        System.out.println(msg.getcontent());
-                        try {
-                            String sendjson=objectMapper.writeValueAsString(msg);
-                            ACKMessageDTO ack=new ACKMessageDTO();
-                            ack.setchatid(ChatId);
-                            ack.settempmsgid(data.gettempmsgid());
-                            ack.setmsgid(msgId);
-                            if(reciever_sink!=null){
-                                
-                                reciever_sink.tryEmitNext(sendjson);
-                                ack.setstatus("delivered");
-                                status.set("delivered");
-                                userstatus.computeIfAbsent(userids, k -> new ConcurrentHashMap<>())
-                                .putIfAbsent(ChatId, "in-active");
-                                if(userstatus.get(userids).get(ChatId).equals("active")){
-                                    ack.setstatus("read");
-                                    status.set("read");
-                                }
-                                deltime.set(LocalDateTime.now());
-                            }
-                            else{
-                                System.out.println("User is offline");   
-                                String payload=data.getspaceid()+"/%20/"+data.gettype()+"/%20/"+username+"/%20/"+data.getcontent();
-                                notificationService.notifyUser(userids,ChatId,username,payload,type).subscribe();                               
-                                ack.setstatus("pending");
-                            }
-                            try {
-                                String ackjson=objectMapper.writeValueAsString(ack);
-                                sender_sink.tryEmitNext(ackjson);
-                            } catch (JsonProcessingException e) {
-                                System.out.println("in ack"+e);
-                            }
-                        } catch (JsonProcessingException e) {
-                            System.out.println("in send"+e);
-                        }
-                        return messageTrackHistoryRepo.insert(msgId, Userid, userids, status.get(), deltime.get())
-                        .then(Mono.just("inserted"));
-                    }).then();
-                }).then();
-            }).then();
-            }).then();
-        })
-        .onErrorResume(e->{
-            return loadmsg(sessionid,json);
-        }).then();
 
-    }
+            String msgId = "Msg-" + UUID.randomUUID();
+            String chatId = data.getchatid();
+            String userId = this.userid.get(sessionId);
+
+            if (userId == null) {
+                return Mono.error(new RuntimeException("Invalid session"));
+            }
+
+            Sinks.Many<String> senderSink = usersink.get(userId);
+
+            // ── INDICATOR ────────────────────────────────────────────────────
+            if ("indicator".equals(data.gettype())) {
+                return getusername(chatId, userId)
+                    .flatMap(username ->
+                        getUserIds(chatId, userId)
+                            .flatMap(receiverId -> {
+                                Sinks.Many<String> receiverSink = usersink.get(receiverId);
+                                SendingMessageDTO msg = buildMsg(null, chatId, data, username, userId);
+                                return sendToSinkAsync(receiverSink, msg);
+                            }).then()
+                    );
+            }
+
+            // ── NORMAL FLOW ──────────────────────────────────────────────────
+            return messageInfoRepo.insert(
+                    msgId, chatId, userId,
+                    data.gettype(), data.getcontent(),
+                    data.getrepliedto(), data.getforwardedfrom(),
+                    data.gettimestamp(), data.getspaceid()
+                )
+                .flatMap(info -> getType(chatId)
+                    .flatMap(type -> {
+
+                        // ── CLASSROOM / ROOM ──────────────────────────────────
+                        if ("classroom".equals(type) || "room".equals(type)) {
+
+                            return sendAckAsync(senderSink, chatId, data.gettempmsgid(), msgId, "read")
+                                .then(getusername(chatId, userId))
+                                .flatMap(username ->
+                                    getUserIds(chatId, userId)
+                                        .flatMap(receiverId -> {
+                                            System.out.println("sednerid:"+userId+"sendername:"+username);
+                                            Sinks.Many<String> receiverSink = usersink.get(receiverId);
+                                            SendingMessageDTO msg = buildMsg(msgId, chatId, data, username, userId);
+                                            fireNotification(receiverId, chatId, username, data, type);
+                                            if (receiverSink != null) {
+                                               // fireNotification(receiverId, chatId, username, data, type);
+                                                return sendToSinkAsync(receiverSink, msg);//.doOnNext(fireNotification(receiverId, chatId, username, data, type));
+                                            }
+                                            return Mono.empty();
+                                        }).then()
+                                );
+                        }
+
+                        // ── NORMAL CHAT ───────────────────────────────────────
+                        return getusername(chatId, userId)
+                            .flatMap(username ->
+                                getUserIds(chatId, userId)
+                                    .flatMap(receiverId -> {
+                                        System.out.println("sednerid:"+userId+"sendername:"+username);
+                                        Sinks.Many<String> receiverSink = usersink.get(receiverId);
+                                        SendingMessageDTO msg = buildMsg(msgId, chatId, data, username, userId);
+                                        fireNotification(receiverId, chatId, username, data, type);
+                                        if (receiverSink != null) {
+                                            userstatus.computeIfAbsent(receiverId, k -> new ConcurrentHashMap<>())
+                                                      .putIfAbsent(chatId, "in-active");
+
+                                            boolean isActive = "active".equals(
+                                                userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId)
+                                            );
+
+                                            String status = isActive ? "read" : "delivered";
+                                            LocalDateTime deliveredTime = LocalDateTime.now();
+
+                                            return sendToSinkAsync(receiverSink, msg)
+                                                .then(messageTrackHistoryRepo.insert(
+                                                    msgId, userId, receiverId, status, deliveredTime
+                                                ))
+                                                .thenReturn(status);
+
+                                        } else {
+                                            // fireNotification(receiverId, chatId, username, data, type);
+
+                                            return messageTrackHistoryRepo.insert(
+                                                    msgId, userId, receiverId, "pending", null
+                                                )
+                                                .thenReturn("pending");
+                                        }
+                                    })
+                                    .reduce("read", (acc, curr) -> {
+                                        if ("pending".equals(acc) || "pending".equals(curr)) return "pending";
+                                        if ("delivered".equals(acc) || "delivered".equals(curr)) return "delivered";
+                                        return "read";
+                                    })
+                                    .flatMap(finalStatus ->
+                                        sendAckAsync(senderSink, chatId, data.gettempmsgid(), msgId, finalStatus)
+                                    )
+                            );
+
+                    }).then()
+                ).then()
+                .doOnSuccess(v -> {adminService.onMessageSent();adminService.onUserActivity(userId);});
+        })
+        .onErrorResume(e -> {
+            System.out.println("load msg calling");
+            return loadmsg(sessionId, json);
+        }).then();
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+private SendingMessageDTO buildMsg(String msgId, String chatId,
+                                   ReceivingMessageDTO data,
+                                   String username, String userId) {
+    SendingMessageDTO msg = new SendingMessageDTO();
+    msg.setmsgid(msgId);
+    msg.setchatid(chatId);
+    msg.settype(data.gettype());
+    msg.setcontent(data.getcontent());
+    msg.setsendername(username);
+    msg.setsenderid(userId);
+    msg.settimestamp(data.gettimestamp());
+    msg.setrepliedto(data.getrepliedto());
+    msg.setforwardedfrom(data.getforwardedfrom());
+    msg.setspaceid(data.getspaceid());
+    return msg;
+}
+
+private Mono<Void> sendToSinkAsync(Sinks.Many<String> sink, Object payload) {
+    if (sink == null) return Mono.empty();
+    return Mono.fromCallable(() -> objectMapper.writeValueAsString(payload))
+        .subscribeOn(Schedulers.boundedElastic())
+        .doOnNext(sink::tryEmitNext)
+        .then();
+}
+
+private Mono<Void> sendAckAsync(Sinks.Many<String> senderSink, String chatId,
+                                 String tempMsgId, String msgId, String status) {
+    ACKMessageDTO ack = new ACKMessageDTO();
+    ack.setchatid(chatId);
+    ack.settempmsgid(tempMsgId);
+    ack.setmsgid(msgId);
+    ack.setstatus(status);
+    return sendToSinkAsync(senderSink, ack);
+}
+
+private void fireNotification(String receiverId, String chatId,
+                               String username, ReceivingMessageDTO data, String type) {
+    String payload = data.getspaceid() + "/%20/" + data.gettype()
+                   + "/%20/" + username + "/%20/" + data.getcontent();
+    notificationService.notifyUser(receiverId, chatId, username, payload, type)
+        .subscribeOn(Schedulers.boundedElastic())
+        .onErrorResume(e -> {
+            System.out.println("FCM error: " + e);
+            return Mono.empty();
+        })
+        .subscribe();
+}
 
     @SuppressWarnings("ConvertToStringSwitch")
     public Mono<Void> loadmsg(String sessionid,String json){
+        System.out.println("load msg called");
         String Userid=userid.get(sessionid);
         Sinks.Many<String> sender_sink=usersink.get(Userid);
        // String Chatid;
@@ -611,6 +681,10 @@ public void removeUserFromChatCache(String chatId, String userId) {
             contents=admin+ " created "+username;
             youcontent="You created "+username;
         }
+        else if(purpose=="change"){
+            contents=admin+" change profile to "+username;
+            youcontent="You changed your profile to"+username;
+        }
         else{
             contents=username +" left";
             youcontent="You left";
@@ -727,7 +801,9 @@ public void removeUserFromChatCache(String chatId, String userId) {
             } catch (Exception e) {
                 return Mono.error(e);
             }
-
+            String payload=msg.getSpaceId()+"/%20/"+msg.getMessageType()+"/%20/"+username+"/%20/"+msg.getMessage();
+            notificationService.notifyUser(uid,msg.getChatId(),username,payload,null).subscribe();                                
+         
             if (receiverSink != null) {
 
                 receiverSink.tryEmitNext(sendjson);
@@ -753,8 +829,8 @@ public void removeUserFromChatCache(String chatId, String userId) {
                 }
 
             }else{
-                String payload=msg.getSpaceId()+"/%20/"+msg.getMessageType()+"/%20/"+username+"/%20/"+msg.getMessage();
-                notificationService.notifyUser(uid,msg.getChatId(),username,payload,null).subscribe();                                
+              //  String payload=msg.getSpaceId()+"/%20/"+msg.getMessageType()+"/%20/"+username+"/%20/"+msg.getMessage();
+              //  notificationService.notifyUser(uid,msg.getChatId(),username,payload,null).subscribe();                                
             }
 
             return messageTrackHistoryRepo.insert(

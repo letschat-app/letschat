@@ -149,7 +149,7 @@ FROM (
                 END
             LIMIT 1
         ) AS status,
-
+        mi."SpaceId" as spaceid,
         false AS isold  -- since user is only receiving here
 
     FROM "MessageInfo" mi
@@ -218,5 +218,41 @@ ORDER BY mi."Time" ASC;
 
           """)
           Flux<LoadMessageDTO> loadforroom(String Chatid);
+
+
+              @Query("""
+            select count(distinct "SenderId")
+            from "MessageInfo"
+            """)
+    Mono<Long> getTotalUsers();
+
+    @Query("""
+            select count(*)
+            from (
+                select "SenderId"
+                from "MessageInfo"
+                group by "SenderId"
+                having max("SpaceId") = 0
+            ) t
+            """)
+    Mono<Long> getDefaultOnlyUsers();
+
+    @Query("""
+            select count(*)
+            from (
+                select "SenderId"
+                from "MessageInfo"
+                group by "SenderId"
+                having count(distinct "SpaceId") > 1
+            ) t
+            """)
+    Mono<Long> getMultiSpaceUsers();
+
+    @Query("""
+            select count(distinct "SenderId")
+            from "MessageInfo"
+            where "SpaceId" > 0
+            """)
+    Mono<Long> getCustomSpaceUsers();
           
 }

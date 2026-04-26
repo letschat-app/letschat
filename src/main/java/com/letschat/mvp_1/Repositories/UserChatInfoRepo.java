@@ -96,4 +96,9 @@ group by "ChatId" having count(distinct "UserId")=2
 
                         """)
         Mono<UserChatInfo> getUserChat(String C1,String U1);
+
+        @Query("""
+                select "UserName" from "UserChat" where "ChatId"=:cid and "UserId"=:uid
+                        """)
+                Mono<String> getUsername(String cid,String uid);
 }

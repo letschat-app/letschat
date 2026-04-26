@@ -70,6 +70,7 @@ public class GroupAddService {
 
     public Mono<String> joinclass(String RoomId,String UserId){
         LocalDateTime now=LocalDateTime.now();
+        System.out.println("joining "+RoomId);
         return classRoomRepo.findByRoomId(RoomId)
         .flatMap(room->{
             return userInfoRepo.findByUserId(UserId)

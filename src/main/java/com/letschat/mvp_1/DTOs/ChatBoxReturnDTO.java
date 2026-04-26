@@ -14,9 +14,10 @@ public class ChatBoxReturnDTO {
     private LocalDateTime timestamp;
     private String Role;
     private String Profile;
+    private Long noOfMembers; 
 
     public ChatBoxReturnDTO(){}
-    public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role,String Profile){
+    public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role,String Profile,Long noOfMembers){
         this.ChatId=ChatId;
         this.Id=Id;
         this.ChatName=ChatName;
@@ -25,6 +26,7 @@ public class ChatBoxReturnDTO {
         this.timestamp=timestamp;
         this.Role=Role;
         this.Profile=Profile;
+        this.noOfMembers=noOfMembers;
     }
 
     public String getChatId(){
@@ -81,5 +83,12 @@ public class ChatBoxReturnDTO {
     }
     public void setProfile(String Profile){
         this.Profile=Profile;
+    }
+
+    public Long getNoOfMembers(){
+        return noOfMembers;
+    }
+    public void setNoOfMembers(Long noOfMembers){
+        this.noOfMembers=noOfMembers;
     }
 }

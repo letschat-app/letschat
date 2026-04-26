@@ -20,10 +20,12 @@ public class UserInfo {
     private Long Location;
     private Long CurrentLocation;//null
     private String Password;
+    @Column("RoomNickName")
+    private String RoomNickName;//null
 
     public UserInfo(){}
 
-    public UserInfo(String UserId,String PrivateName,String PublicName,String UserProfilePath,int Age,String Gender,Long Location,Long CurrentLocation,String Password){
+    public UserInfo(String UserId,String PrivateName,String PublicName,String UserProfilePath,int Age,String Gender,Long Location,Long CurrentLocation,String Password,String RoomNickName){
         this.UserId=UserId;
         this.PrivateName=PrivateName;
         this.PublicName=PublicName;
@@ -33,6 +35,7 @@ public class UserInfo {
         this.Location=Location;
         this.CurrentLocation=CurrentLocation;
         this.Password=Password;
+        this.RoomNickName=RoomNickName;
     }
 
     public String getUserId(){
@@ -96,6 +99,13 @@ public class UserInfo {
     }
     public void setPassword(String Password){
         this.Password=Password;
+    }
+
+    public String getRoomNickname(){
+        return RoomNickName;
+    }
+    public void setRoomNickName(String RoomNickName){
+        this.RoomNickName=RoomNickName;
     }
 
 }

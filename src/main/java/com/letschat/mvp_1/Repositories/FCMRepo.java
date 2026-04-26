@@ -29,4 +29,10 @@ public interface FCMRepo extends ReactiveCrudRepository<UserTokenModel,String>{
         device_id = :deviceId
     """)
     Mono<Void> deleteToken(String deviceId);
+
+    @Query("""
+        SELECT user_id, fcm_token
+        FROM "UserFCMToken"
+    """)
+    Flux<UserTokenModel> getAllUsersWithTokens();
 }

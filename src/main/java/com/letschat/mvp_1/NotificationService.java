@@ -3,193 +3,146 @@ package com.letschat.mvp_1;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.Message;
+import com.letschat.mvp_1.Repositories.EventInfoRepo;
+import com.letschat.mvp_1.Repositories.FCMRepo;
+import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import reactor.core.scheduler.Schedulers;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import com.letschat.mvp_1.Repositories.FCMRepo;
+import reactor.core.scheduler.Schedulers;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
-
 
 @Component
 public class NotificationService {
 
     private static final int MAX_MESSAGES = 5;
 
-    // 🔹 In-memory message aggregation
+    // ================= CACHE =================
     private final Map<String, ChatState> store = new ConcurrentHashMap<>();
-
-    // 🔹 Debounce timers
     private final Map<String, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> eventDedup = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler =
             Executors.newScheduledThreadPool(2);
 
-    // 🔹 Token cache
-    private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
-
     private final ObjectMapper objectMapper = new ObjectMapper();
-
     private final FCMRepo fcmRepo;
+    private final EventInfoRepo eventInfoRepo;
+    private final UserChatInfoRepo userChatInfoRepo;
 
-    public NotificationService(FCMRepo fcmRepo) {
+    public NotificationService(FCMRepo fcmRepo,EventInfoRepo eventInfoRepo,UserChatInfoRepo userChatInfoRepo) {
         this.fcmRepo = fcmRepo;
+        this.eventInfoRepo=eventInfoRepo;
+        this.userChatInfoRepo=userChatInfoRepo;
     }
 
-    // 🔹 Chat state
+    // ================= CHAT STATE =================
     public static class ChatState {
         public int unread;
+        public long lastUpdated = System.currentTimeMillis();
         public List<String> messages = new ArrayList<>();
     }
 
-    private String key(String userId, String chatId) {
+    private String chatKey(String userId, String chatId) {
         return userId + ":" + chatId;
     }
 
-    // =========================
-    // 🔥 TOKEN CACHE (REACTIVE)
-    // =========================
+    private String eventKey(String userId, Long eventId, String type) {
+        return userId + ":" + eventId + ":" + type;
+    }
+
+    // ================= TOKEN CACHE =================
+    public void putToken(String userId, String token) {
+        tokenCache
+                .computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet())
+                .add(token);
+    }
+
+    public void removeToken(String userId, String token) {
+        Set<String> set = tokenCache.get(userId);
+        if (set != null) {
+            set.remove(token);
+            if (set.isEmpty()) tokenCache.remove(userId);
+        }
+    }
 
     public Flux<String> getTokens(String userId) {
-
         Set<String> cached = tokenCache.get(userId);
-
-        // ✅ Cache hit
         if (cached != null && !cached.isEmpty()) {
             return Flux.fromIterable(cached);
         }
 
-        // 🔥 Cache miss → DB
         return fcmRepo.getTokens(userId)
-                .doOnNext(token -> {
-                    tokenCache
-                            .computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet())
-                            .add(token);
-                });
+                .doOnNext(t ->
+                        tokenCache
+                                .computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet())
+                                .add(t)
+                );
     }
 
-    // public Mono<Void> addToken(String userId, String token) {
-
-    //     tokenCache
-    //             .computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet())
-    //             .add(token);
-
-    //     return fcmRepo.saveToken(userId, token).then();
-    // }
-
-    // public Mono<Void> removeToken(String userId, String token) {
-
-    //     Set<String> tokens = tokenCache.get(userId);
-
-    //     if (tokens != null) {
-    //         tokens.remove(token);
-    //     }
-
-    //     return fcmRepo.deleteToken(userId, token).then();
-    // }
-
-    // =========================
-    // 🔥 MESSAGE AGGREGATION
-    // =========================
-
+    // ================= CHAT LOGIC =================
     public ChatState addMessage(String userId, String chatId, String message) {
-
-        String k = key(userId, chatId);
+        String k = chatKey(userId, chatId);
 
         store.putIfAbsent(k, new ChatState());
-
         ChatState state = store.get(k);
 
         synchronized (state) {
-
             state.unread++;
-
+            state.lastUpdated = System.currentTimeMillis();
             state.messages.add(message);
 
             if (state.messages.size() > MAX_MESSAGES) {
                 state.messages.remove(0);
             }
-
             return state;
         }
     }
 
     public void clear(String userId, String chatId) {
+        String k = chatKey(userId, chatId);
+        store.remove(k);
 
-        store.remove(key(userId, chatId));
-
-        ScheduledFuture<?> future = timers.remove(key(userId, chatId));
-
-        if (future != null) {
-            future.cancel(false);
-        }
+        ScheduledFuture<?> f = timers.remove(k);
+        if (f != null) f.cancel(false);
     }
 
-    // =========================
-    // 🔥 MAIN ENTRY METHOD
-    // =========================
-
-    public Mono<Void> notifyUser(
-            String userId,
-            String chatId,
-            String senderName,
-            String messageContent,
-            String type
-            
-    ) {
+    // ================= CHAT NOTIFY =================
+    // ✅ fully reactive — no collectList, no doOnNext for logic, no nested subscribe
+    public Mono<Void> notifyUser(String userId, String chatId,
+                                 String title, String msg, String type) {
 
         return getTokens(userId)
-                .flatMap(token -> {
-
-                    processNotification(
-                            userId,
-                            chatId,
-                            senderName,
-                            messageContent,
-                            token
-                    );
-
-                    return Mono.empty();
-                })
+                .flatMap(token ->
+                        Mono.fromRunnable(() ->
+                                processChat(userId, chatId, title, msg, token)
+                        ).subscribeOn(Schedulers.boundedElastic())
+                )
                 .then();
     }
 
-    // =========================
-    // 🔥 DEBOUNCE LOGIC
-    // =========================
+    // ================= DEBOUNCE =================
+    // ✅ sendChat() called directly inside Mono.fromRunnable — no sendAsync, no nested subscribe
+    private void processChat(String userId, String chatId,
+                              String title, String msg, String token) {
 
-    public void processNotification(
-            String receiverId,
-            String chatId,
-            String senderName,
-            String messageContent,
-            String deviceToken
-    ) {
+        String k = chatKey(userId, chatId);
+        ChatState state = addMessage(userId, chatId, msg);
 
-        String k = key(receiverId, chatId);
-
-        // 1️⃣ aggregate
-        ChatState state = addMessage(receiverId, chatId, messageContent);
-
-        // 2️⃣ cancel old timer
         ScheduledFuture<?> existing = timers.get(k);
-        if (existing != null) {
-            existing.cancel(false);
-        }
+        if (existing != null) existing.cancel(false);
 
-        // 3️⃣ schedule new (5 sec)
         ScheduledFuture<?> future = scheduler.schedule(() -> {
 
-            sendAsync(
-                    deviceToken,
-                    chatId,
-                    senderName,
-                    state.unread,
-                    state.messages,
-                    receiverId
-            ).subscribe();
+            sendChat(token, chatId, title, state.unread, state.messages, userId);
 
             timers.remove(k);
 
@@ -198,53 +151,217 @@ public class NotificationService {
         timers.put(k, future);
     }
 
-    // =========================
-    // 🔥 FIREBASE SEND
-    // =========================
+    // ================= DEDUP HELPER =================
+    // ✅ TTL-based — checks timestamp not just presence
+    private boolean dedupCheck(String key, long ttlMs) {
+        long now = System.currentTimeMillis();
+        Long last = eventDedup.get(key);
 
-    private void send(
-            String token,
-            String chatId,
-            String title,
-            int unread,
-            List<String> messages,
-            String userId
-    ) {
+        if (last != null && (now - last) < ttlMs) return false;
 
-        try {
+        eventDedup.put(key, now);
+        return true;
+    }
 
-            Map<String, String> data = new HashMap<>();
+    // ================= EVENT REMINDER =================
+    // ✅ no collectList — streaming per event
+    // ✅ subscribe with full error handling
+    @Scheduled(fixedRate = 10 * 60 * 1000)
+    public void checkUpcomingEvents() {
 
-            data.put("chatId", chatId);
-            data.put("title", title);
-            data.put("unread", String.valueOf(unread));
-            data.put("msgs", objectMapper.writeValueAsString(messages));
-            data.put("url", "/chat/" + chatId);
+        Instant now = Instant.now();
+        Instant next = now.plus(1, ChronoUnit.HOURS);
 
-            Message msg = Message.builder()
-                    .putAllData(data)
-                    .setToken(token)
-                    .build();
+        eventInfoRepo.findEventsBetween(now, next)
+                .flatMap(event -> {
 
-            FirebaseMessaging.getInstance().send(msg);
-            System.out.println("notification sent");
-        } catch (Exception e) {
+                    String k = eventKey(event.getUserId(), event.getEventId(), "1H");
 
-            System.out.println("FCM error: " + e);
+                    if (!dedupCheck(k, 60 * 60 * 1000L)) return Mono.empty();
+
+                    return getTokens(event.getUserId())
+                            .flatMap(token ->
+                                    Mono.fromRunnable(() ->
+                                            sendEvent(
+                                                    token,
+                                                    String.valueOf(event.getEventId()),
+                                                    event.getEventTitle(),
+                                                    event.getChatId(),
+                                                    event.getUserId()
+                                            )
+                                    ).subscribeOn(Schedulers.boundedElastic())
+                            );
+                })
+                .doOnError(e -> System.out.println("[EVENT REMINDER] error: " + e))
+                .onErrorResume(e -> Flux.empty())
+                .subscribe(
+                        null,
+                        e -> System.out.println("[EVENT REMINDER] fatal: " + e),
+                        () -> System.out.println("[EVENT REMINDER] done")
+                );
+    }
+
+    // ================= DAILY 6AM =================
+    // ✅ groupBy instead of collectMultimap — no full table in memory
+    // ✅ subscribe with full error handling
+    @Scheduled(cron = "0 15 8 * * *")
+    public void dailySummary() {
+
+        Instant start = Instant.now().truncatedTo(ChronoUnit.DAYS);
+        Instant end = start.plus(1, ChronoUnit.DAYS);
+
+        eventInfoRepo.findTodayEvents(start, end)
+                .groupBy(e -> e.getUserId())
+                .flatMap(group -> group
+                        .map(e -> e.getEventId())
+                        .collectList()
+                        .flatMap(titles -> {
+                            String userId = group.key();
+                            String k = userId + ":daily:" + LocalDate.now();
+
+                            if (!dedupCheck(k, 24 * 60 * 60 * 1000L))
+                                return Mono.empty();
+
+                            return getTokens(userId)
+                                    .flatMap(token ->
+                                            Mono.fromRunnable(() ->
+                                                    sendDaily(token, titles, userId)
+                                            ).subscribeOn(Schedulers.boundedElastic())
+                                    )
+                                    .then();
+                        })
+                )
+                .doOnError(e -> System.out.println("[DAILY SUMMARY] error: " + e))
+                .onErrorResume(e -> Flux.empty())
+                .subscribe(
+                        null,
+                        e -> System.out.println("[DAILY SUMMARY] fatal: " + e),
+                        () -> System.out.println("[DAILY SUMMARY] done")
+                );
+    }
+
+    // ================= TOKEN SYNC (every 2 days) =================
+    @Scheduled(cron = "0 0 0 */2 * *")
+    public void syncTokens() {
+
+        fcmRepo.getAllUsersWithTokens()
+                .collectList()
+                .doOnNext(list -> {
+
+                    Map<String, Set<String>> newCache = new ConcurrentHashMap<>();
+
+                    for (var row : list) {
+                        newCache
+                                .computeIfAbsent(row.getUserId(), k -> ConcurrentHashMap.newKeySet())
+                                .add(row.getFcmToken());
+                    }
+
+                    tokenCache.clear();
+                    tokenCache.putAll(newCache);
+
+                    System.out.println("[TOKEN SYNC] users=" + newCache.size());
+                })
+                .doOnError(e -> System.out.println("[TOKEN SYNC] error: " + e))
+                .onErrorResume(e -> Mono.empty())
+                .subscribe(
+                        null,
+                        e -> System.out.println("[TOKEN SYNC] fatal: " + e),
+                        () -> System.out.println("[TOKEN SYNC] done")
+                );
+    }
+
+    // ================= DEDUP CLEANUP (every 2 hours) =================
+    // ✅ TTL eviction — removes only expired keys, not blanket clear
+    @Scheduled(fixedRate = 2 * 60 * 60 * 1000)
+    public void cleanEventDedup() {
+        long now = System.currentTimeMillis();
+        long ttl = 25 * 60 * 60 * 1000L;
+
+        int before = eventDedup.size();
+        eventDedup.entrySet().removeIf(entry -> (now - entry.getValue()) > ttl);
+
+        int removed = before - eventDedup.size();
+        if (removed > 0) {
+            System.out.println("[DEDUP CLEANUP] removed=" + removed
+                    + " remaining=" + eventDedup.size());
         }
     }
 
-    // 🔹 Reactive wrapper
-    public Mono<Void> sendAsync(
-            String token,
-            String chatId,
-            String title,
-            int unread,
-            List<String> messages,
-            String userId
-    ) {
-        return Mono.fromRunnable(() ->
-                send(token, chatId, title, unread, messages, userId)
-        ).subscribeOn(Schedulers.boundedElastic()).then();
+    // ================= STALE CHAT CLEANUP (every 30 mins) =================
+    // ✅ evicts store entries idle for over 1 hour — prevents memory leak
+    @Scheduled(fixedRate = 30 * 60 * 1000)
+    public void cleanStaleChats() {
+        long now = System.currentTimeMillis();
+        long ttl = 60 * 60 * 1000L;
+
+        int before = store.size();
+
+        store.entrySet().removeIf(entry -> {
+            synchronized (entry.getValue()) {
+                return (now - entry.getValue().lastUpdated) > ttl;
+            }
+        });
+
+        int removed = before - store.size();
+        if (removed > 0) {
+            System.out.println("[CHAT CLEANUP] removed=" + removed + " stale entries");
+        }
+    }
+
+    // ================= FIREBASE SENDS =================
+    private void sendChat(String token, String chatId, String title,
+                          int unread, List<String> msgs, String userId) {
+        try {
+            Map<String, String> data = new HashMap<>();
+            data.put("type", "CHAT");
+            data.put("chatId", chatId);
+            data.put("title", title);
+            data.put("unread", String.valueOf(unread));
+            data.put("msgs", objectMapper.writeValueAsString(msgs));
+
+            FirebaseMessaging.getInstance()
+                    .send(Message.builder().putAllData(data).setToken(token).build());
+
+            System.out.println("[CHAT] sent to " + userId);
+
+        } catch (Exception e) {
+            System.out.println("[CHAT] error: " + e);
+        }
+    }
+
+    private void sendEvent(String token, String eventId, String title,
+                           String chatId, String userId) {
+        try {
+            Map<String, String> data = new HashMap<>();
+            data.put("type", "EVENT");
+            data.put("eventId", eventId);
+            data.put("title", title);
+            data.put("chatId", chatId);
+
+            FirebaseMessaging.getInstance()
+                    .send(Message.builder().putAllData(data).setToken(token).build());
+
+            System.out.println("[EVENT] sent to " + userId);
+
+        } catch (Exception e) {
+            System.out.println("[EVENT] error: " + e);
+        }
+    }
+
+    private void sendDaily(String token, List<Long> events, String userId) {
+        try {
+            Map<String, String> data = new HashMap<>();
+            data.put("type", "DAILY");
+            data.put("events", objectMapper.writeValueAsString(events));
+            data.put("date", LocalDate.now().toString());
+
+            FirebaseMessaging.getInstance()
+                    .send(Message.builder().putAllData(data).setToken(token).build());
+
+            System.out.println("[DAILY] sent to " + userId);
+
+        } catch (Exception e) {
+            System.out.println("[DAILY] error: " + e);
+        }
     }
 }

@@ -33,6 +33,18 @@ public class UserSearchService {
             UserSearchResult User=new UserSearchResult();
             User.setUserId(user.getUserId());
             User.setUserName(user.getPublicName());
+            User.setProfile(user.getUserProfilePath());
+            return Mono.just(User);
+        });
+    }
+
+    public Mono<UserSearchResult> getme(String userid){
+        return userInfoRepo.getme(userid)
+        .flatMap(user->{
+            UserSearchResult User=new UserSearchResult();
+            User.setUserId(user.getUserId());
+            User.setUserName(user.getPublicName());
+            User.setProfile(user.getUserProfilePath());
             return Mono.just(User);
         });
     }

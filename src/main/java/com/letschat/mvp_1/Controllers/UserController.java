@@ -1,6 +1,7 @@
 package com.letschat.mvp_1.Controllers;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -17,6 +18,7 @@ import com.letschat.mvp_1.DTOs.UserLoginDTO;
 import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.DTOs.UserSignUpDTO;
 import com.letschat.mvp_1.Models.EventInfo;
+import com.letschat.mvp_1.Service.AdminService;
 import com.letschat.mvp_1.Service.ChatBoxService;
 import com.letschat.mvp_1.Service.EventService;
 import com.letschat.mvp_1.Service.GroupCreateService;
@@ -25,6 +27,7 @@ import com.letschat.mvp_1.Service.UserLoginService;
 import com.letschat.mvp_1.Service.UserProfileService;
 import com.letschat.mvp_1.Service.UserSearchService;
 import com.letschat.mvp_1.Service.UserSignUpService;
+import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
 import reactor.core.publisher.Mono;
 
@@ -41,7 +44,13 @@ public class UserController {
     private final ChatBoxService chatBoxService;
     private final UserProfileService userProfileService;
     private final EventService eventService;
-    public UserController(UserSignUpService userSignUpService,UserLoginService userLoginService,UserSearchService userSearchService,UserChatService userChatService,GroupCreateService groupCreateService,ChatBoxService chatBoxService,UserProfileService userProfileService,EventService eventService){
+    public final MyWebSocketHandler myWebSocketHandler;
+    private final AdminService adminService;
+    public UserController(UserSignUpService userSignUpService,UserLoginService userLoginService,
+        UserSearchService userSearchService,UserChatService userChatService,
+        GroupCreateService groupCreateService,ChatBoxService chatBoxService,
+        UserProfileService userProfileService,EventService eventService,
+        MyWebSocketHandler myWebSocketHandler,AdminService adminService){
         this.userSignUpService=userSignUpService;
         this.userLoginService=userLoginService;
         this.userSearchService=userSearchService;
@@ -49,6 +58,8 @@ public class UserController {
         this.chatBoxService=chatBoxService;
         this.userProfileService = userProfileService;
         this.eventService=eventService;
+        this.myWebSocketHandler=myWebSocketHandler;
+        this.adminService=adminService;
     }
 
     @PostMapping("/create")
@@ -62,6 +73,11 @@ public class UserController {
     public Mono<ResponseEntity<String>> login(@RequestBody UserLoginDTO request){
         return userLoginService.logUser(request)
         .map(message->ResponseEntity.ok(message));
+    }
+
+    @GetMapping("/me")
+    public Mono<UserSearchResult> getme(@RequestHeader("User-Id") String UserId){
+        return userSearchService.getme(UserId);
     }
 
     @GetMapping("/explore")
@@ -127,5 +143,13 @@ public class UserController {
         .map(msg->ResponseEntity.ok("ok"))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
     }
+
+    @PostMapping("/check-status")
+    public Mono<Map<String,Boolean>> check(@RequestBody List<String> userids){
+        System.out.println("status check "+ userids.size());
+        return myWebSocketHandler.checkUserStatus(userids);
+    }
+    
+
     
 }

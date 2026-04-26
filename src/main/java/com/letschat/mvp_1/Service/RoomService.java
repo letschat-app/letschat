@@ -48,6 +48,14 @@ public class RoomService {
         .switchIfEmpty(Mono.just("failed"));
     }
 
+    public Mono<String> createRoomNickname(String name,String userid){
+        return userInfoRepo.setroomname(name,userid)
+        .flatMap(user->Mono.just("success"));
+    }
+    public Mono<String> getRoomNickName(String userid){
+        return userInfoRepo.getroomname(userid);
+    }
+
     public Mono<RoomInfo> createRoom(String userId, String roomName, String motto) {
 
     return userInfoRepo.findByUserId(userId)
@@ -60,7 +68,7 @@ public class RoomService {
                         chatId,
                         user.getUserId(),
                         roomName,
-                        user.getPrivateName(),
+                        user.getRoomNickname(),
                         now,
                         now,
                         "room",
@@ -105,7 +113,7 @@ public class RoomService {
                         chat.getChatId(),
                         user.getUserId(),
                         room.getRoomName(),
-                        user.getPublicName(),
+                        user.getRoomNickname(),
                         now,
                         now,
                         "room",
@@ -138,6 +146,8 @@ public class RoomService {
                 json.setChatId(chat.getChatId());
                 json.setId(room.getRoomId());
                 json.setProfile(room.getProfile());
+                json.setNoOfMembers(room.getNoOfMembers());
+                json.setStatus(room.getMotto());
                 return Mono.just(json);
             });
         });

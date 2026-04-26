@@ -2,6 +2,7 @@ package com.letschat.mvp_1.Controllers;
 
 import java.util.Map;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -55,5 +56,21 @@ public class RoomController {
     @GetMapping("/load/{userId}")
     public Flux<ChatBoxReturnDTO> loadUserRooms(@PathVariable String userId){
         return roomService.load(userId);
+    }
+
+    @PostMapping("/set/name")
+    public Mono<ResponseEntity<String>> putnickname(@RequestBody Map<String,String> body,@RequestHeader("User-id") String userid) {
+        
+        return roomService.createRoomNickname(body.get("name"),userid)
+        .map(msg->ResponseEntity.ok(msg))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
+    }
+
+    @GetMapping("/get/name")
+    public Mono<ResponseEntity<String>> getnickname(@RequestHeader("User-id") String userid) {
+        
+        return roomService.getRoomNickName(userid)
+        .map(msg->ResponseEntity.ok(msg))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
     }
 }

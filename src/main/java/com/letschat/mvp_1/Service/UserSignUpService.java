@@ -15,11 +15,12 @@ public class UserSignUpService {
     private final UserInfoRepo userInfoRepo;
     private final LocationInfoRepo locationInfoRepo;
     private final IdTableRepo idTableRepo;
-
-    public UserSignUpService(UserInfoRepo userInfoRepo,LocationInfoRepo locationInfoRepo,IdTableRepo idTableRepo){
+    private final AdminService adminService;
+    public UserSignUpService(UserInfoRepo userInfoRepo,LocationInfoRepo locationInfoRepo,IdTableRepo idTableRepo, AdminService adminService){
         this.userInfoRepo=userInfoRepo;
         this.locationInfoRepo=locationInfoRepo;
         this.idTableRepo=idTableRepo;
+        this.adminService=adminService;
     }   
 
 
@@ -46,7 +47,8 @@ public class UserSignUpService {
             .flatMap(location->generateId().flatMap(id->{
                 System.out.println(location.getLocationId());
                  return userInfoRepo.insert(id, request.getPrivateName(), request.getPublicName(), request.getAge(), request.getGender(), location.getLocationId(), request.getPassword())
-            .thenReturn(id);
+                .doOnSuccess(msg->adminService.onUserRegistered(id))
+                 .thenReturn(id);
             }));
         })
         );

@@ -57,6 +57,7 @@ public class ClassRoomController {
 
     @PostMapping("/join/{roomid}")
     public Mono<ResponseEntity<String>> join(@PathVariable String roomid,@RequestHeader("User-Id") String UserId){
+        System.out.println("called to join");
         return groupAddService.joinclass(roomid, UserId)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed"))); 

@@ -3,6 +3,7 @@ package com.letschat.mvp_1.Repositories;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 
+import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Models.UserInfo;
 
 import reactor.core.publisher.Flux;
@@ -43,5 +44,19 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
 	limit 1
             """)
         Mono<String> findName(String Userid,String Chatid);
-    
+
+        @Query("""
+            select * from "UserInfo" where "UserId"=:id
+            """)
+            Mono<UserInfo> getme(String id);
+
+        @Query("""
+            update "UserInfo" set "RoomNickName"=:name where "UserId"=:id returning *
+            """)
+            Mono<UserInfo> setroomname(String name,String id);
+            
+            @Query("""
+                select "RoomNickName" from "UserInfo" where "UserId"=:id
+                """)
+                Mono<String> getroomname(String id);
 }
