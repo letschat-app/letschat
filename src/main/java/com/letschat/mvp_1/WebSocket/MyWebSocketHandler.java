@@ -109,7 +109,12 @@ public class MyWebSocketHandler implements WebSocketHandler{
                 sink.tryEmitNext("pong");
                 return Mono.empty();
             }
-            return onrecieve(sessionid, payload);
+            return onrecieve(sessionid, payload)
+            .onErrorResume(err->{
+                System.out.println("error in recive msgs: "+err.getMessage());
+                err.printStackTrace();
+                return Mono.empty();
+            });
         })
         .doOnError(err -> System.out.println("error:" + err.getMessage()))
         .doFinally(status -> {

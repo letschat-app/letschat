@@ -2,6 +2,7 @@ package com.letschat.mvp_1.DTOs;
 
 import java.time.LocalDateTime;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public class ChatUpdateDTO {
@@ -11,6 +12,7 @@ public class ChatUpdateDTO {
     @JsonProperty("usermsgId")
     private String usermsgId;
     @JsonProperty("timestamp")
+    @JsonFormat(pattern="yyyy-MM-dd HH:mm:ss")
     private LocalDateTime timestamp;
 
     public ChatUpdateDTO(){}
