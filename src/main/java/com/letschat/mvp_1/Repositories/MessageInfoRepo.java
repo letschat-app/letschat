@@ -99,13 +99,13 @@ SELECT distinct on (mi."MessageId")
       mi."SpaceId" as spaceid
 
 FROM "MessageInfo" mi
-join "UserChat" uct on uct."ChatId"='AAA000' and uct."UserId"='AAA000'
+join "UserChat" uct on uct."ChatId"=:Chatid and uct."UserId"=:Userid
 JOIN "MessageTrackHistory" mt ON mi."MessageId" = mt."MessageId"
-WHERE (mt."SenderId" = :Userid OR mt."RecieverId" = :Userid) and mi."ChatId"=(select "Id" from "UserChat" uc3 where uc3."ChatId"=:Chatid order by "Id"asc limit 1) and mi."Time">=uct."At" order by mi."MessageId" ,mi."Time" asc
-    ) as latmsg order by timestamp asc;
+WHERE (mt."SenderId" = :Userid OR mt."RecieverId" = :Userid) and mi."ChatId"=(select "Id" from "UserChat" uc3 where uc3."ChatId"=:Chatid order by "Id"asc limit 1) and mi."Time">=uct."At" AND mi."SpaceId" = :SpaceId AND mi."Time" < :before order by mi."MessageId" ,mi."Time" desc
+    ) as latmsg order by timestamp desc limit 60;
 
             """)
-            Flux<LoadMessageDTO> load(String Userid,String Chatid);
+            Flux<LoadMessageDTO> load(String Userid,String Chatid,Integer SpaceId,LocalDateTime before);
             //add in error WHEN mt2."Status" IN ('delivered', 'read') THEN true in load
       @Query("""
           SELECT *
@@ -214,10 +214,13 @@ JOIN "UserChat" uc
 JOIN "UserInfo" ui
     ON ui."UserId" = mi."SenderId"
 WHERE uc."ChatId" = :Chatid
-ORDER BY mi."Time" ASC;
+AND mi."SpaceId" = :spaceId                    
+AND mi."Time" < :before
+ORDER BY mi."Time" DESC
+Limit 60;
 
           """)
-          Flux<LoadMessageDTO> loadforroom(String Chatid);
+          Flux<LoadMessageDTO> loadforroom(String Chatid,Integer spaceId,LocalDateTime before);
 
 
               @Query("""

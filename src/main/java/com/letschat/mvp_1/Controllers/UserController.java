@@ -17,6 +17,7 @@ import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
 import com.letschat.mvp_1.DTOs.UserLoginDTO;
 import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.DTOs.UserSignUpDTO;
+import com.letschat.mvp_1.Models.ChatSpace;
 import com.letschat.mvp_1.Models.EventInfo;
 import com.letschat.mvp_1.Service.AdminService;
 import com.letschat.mvp_1.Service.ChatBoxService;
@@ -144,15 +145,24 @@ public class UserController {
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
     }
 
+    @PostMapping("/add-space")
+    public Mono<ResponseEntity<String>> addspace(@RequestBody ChatSpace data){
+        return userChatService.addspace(data)
+        .map(msg->ResponseEntity.ok("ok"))
+        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
+    }
+
+    @GetMapping("/get-space/{ChatId}")
+    public Mono<List<ChatSpace>> getspace(@PathVariable String ChatId){
+        return userChatService.getspace(ChatId).collectList();
+    }
+
     @PostMapping("/check-status")
     public Mono<Map<String,Boolean>> check(@RequestBody List<String> userids){
         System.out.println("status check "+ userids.size());
         return myWebSocketHandler.checkUserStatus(userids);
     }
     
-    @GetMapping("/wake-up")
-    public Mono<String> health(){
-        return Mono.just("server is running");
-    }
+
     
 }

@@ -1,6 +1,8 @@
 package com.letschat.mvp_1.WebSocket;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -65,66 +67,79 @@ public class MyWebSocketHandler implements WebSocketHandler{
   //  private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
     @Override
     public Mono<Void> handle(WebSocketSession session){
-            String sessionid = session.getId();
+        String sessionid = session.getId();
 
-            Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
+        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
 
-            String qry = session.getHandshakeInfo().getUri().getQuery();
-            String id = null;
-            if (qry != null && qry.contains("userid=")) {
-                id = qry.split("userid=")[1].split("&")[0];
+        String qry = session.getHandshakeInfo().getUri().getQuery();
+        String id = null;
+        if (qry != null && qry.contains("userid=")) {
+            id = qry.split("userid=")[1].split("&")[0];
+        }
+
+        if (id == null) {
+            return session.close();
+        }
+
+        System.out.println("connected:" + id);
+
+        final String finalId = id; 
+
+    usersink.compute(id, (key, oldSink) -> {
+        if (oldSink != null) {
+            System.out.println("removing old");
+            oldSink.tryEmitComplete();
+            userid.entrySet().removeIf(entry -> entry.getValue().equals(finalId)); 
+        }
+        return sink;
+    });
+
+    adminService.onUserConnected(id);
+    userid.put(sessionid, id);
+
+    System.out.println(userid.size() + "," + usersink.size());
+
+    Mono<Void> connect = onconnect(id).then();
+
+    Mono<Void> recieve = session.receive()
+        .timeout(Duration.ofSeconds(60))
+        .flatMap(msg -> {
+            String payload = msg.getPayloadAsText();
+            if ("ping".equals(payload)) {
+                sink.tryEmitNext("pong");
+                return Mono.empty();
             }
-
-            if (id == null) {
-                return session.close(); // avoid dummy user
-            }
-
-            System.out.println("connected:" + id);
-
-            usersink.compute(id, (key, oldSink) -> {
-                if (oldSink != null) {
-                System.out.println("removing old");
-                oldSink.tryEmitComplete();
-            }
-            return sink;
-        });
-        adminService.onUserConnected(id);
-        userid.put(sessionid, id);
-
-        System.out.println(userid.size() + "," + usersink.size());
-
-        Mono<Void> connect = onconnect(id).then();
-
-        Mono<Void> recieve = session.receive()
-        .flatMap(msg -> onrecieve(sessionid, msg.getPayloadAsText()))
+            return onrecieve(sessionid, payload);
+        })
         .doOnError(err -> System.out.println("error:" + err.getMessage()))
         .doFinally(status -> {
             String uid = userid.remove(sessionid);
             System.out.println(userid.size());
-            adminService.onUserDisconnected(uid);
-            // FIX 4: remove only if it's same sink
-            usersink.computeIfPresent(uid, (key, currentSink) -> {
-                if (currentSink == sink) {
-                    currentSink.tryEmitComplete();
-                    System.out.println("closed");
-                    return null;
-                }
-                return currentSink;
-            });
-
+            if (uid != null) { 
+                adminService.onUserDisconnected(uid);
+                usersink.computeIfPresent(uid, (key, currentSink) -> {
+                    if (currentSink == sink) {
+                        currentSink.tryEmitComplete();
+                        System.out.println("closed");
+                        return null;
+                    }
+                    return currentSink;
+                });
+            }
             System.out.println("removed");
         })
         .then();
 
-        Mono<Void> send = session.send(
+    Mono<Void> send = session.send(
         sink.asFlux()
             .doOnSubscribe(sub -> System.out.println("to send " + userid.get(sessionid)))
             .doOnCancel(() -> System.out.println("to cancel " + userid.get(sessionid)))
             .doOnNext(msg -> System.out.println("sending to " + userid.get(sessionid) + " : " + msg))
             .map(session::textMessage)
-        );
-        return connect.then(Mono.when(recieve,send));
-    }
+    );
+
+    return connect.then(Mono.when(recieve, send));
+}
     public Mono<String> getusername(String chatId,String userId){
         System.out.println(chatId+userId);
         return Mono.defer(() -> {
@@ -410,75 +425,106 @@ private void fireNotification(String receiverId, String chatId,
         String Userid=userid.get(sessionid);
         Sinks.Many<String> sender_sink=usersink.get(Userid);
        // String Chatid;
+       
         return Mono.fromCallable(()->objectMapper.readValue(json,ChatUpdateDTO.class))
             .flatMap(data->{
                 return getType(data.getuserchatid())
                 //return userChatInfoRepo.findTypeByChatId(data.getuserchatid())
                 .flatMap(type->{
+              //  Integer space=Integer.parseInt(data.getmsgid());
                 System.out.println(data.getpurpose());
                 System.out.println(data.getuserchatid());
-                if("classroom".equals(type) || "room".equals(type)){
-                    if(data.getpurpose().equals("load")){
-                        return messageInfoRepo.loadforroom(data.getuserchatid())
-                        .flatMap(msg->{
-                            notificationService.clear(Userid, data.getuserchatid());
-                            return Mono.fromCallable(()->objectMapper.writeValueAsString(msg))
-                            .flatMap(msgjson->{
-                                sender_sink.tryEmitNext(msgjson);
-                                return Mono.empty();
-                            });
-                        }).then();                       
-                    }
-                }
-                System.out.print(json);
-                if(data.getpurpose().equals("load")){
-                    
-                    userstatus.compute(Userid, (key,chatmap)->{
-                        if(chatmap==null){
-                            chatmap=new ConcurrentHashMap<>();
-                        }
-                        chatmap.put(data.getuserchatid(),"active");
-                        return chatmap;
+if("classroom".equals(type) || "room".equals(type)){
+    if(data.getpurpose().equals("load")){
+        Integer space=Integer.parseInt(data.getmsgid());
+        return messageInfoRepo.loadforroom(data.getuserchatid(), space, LocalDateTime.now())
+            .collectList()
+            .flatMap(msgs -> {
+                Map<String, Object> batch = new HashMap<>();
+                batch.put("type", "batch");
+                batch.put("chatid", data.getuserchatid());
+                batch.put("hasmore", msgs.size() == 60);
+                batch.put("msgs", msgs);
+                notificationService.clear(Userid, data.getuserchatid());
+                return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                    .doOnNext(sender_sink::tryEmitNext)
+                    .onErrorResume(e -> {
+                        System.out.println(e);
+                        return Mono.empty();
                     });
-                    //Chatid=data.getuserchatid();
-                    return messageInfoRepo.load(Userid, data.getuserchatid())
-                    .flatMap(msg->{
-                        System.out.println(msg);
-                        return Mono.fromCallable(()->objectMapper.writeValueAsString(msg))
-                        .flatMap(msgjson->{
-                            //Sinks.Many<String> sender_sink=usersink.get(Userid);
-                            sender_sink.tryEmitNext(msgjson);
-                            // return messageTrackHistoryRepo.updatestatusonchat(msg.getmsgid(), Userid,LocalDateTime.now())
-                            // .flatMap(updmsg->{
-                            //     if(usersink.containsKey(updmsg.getSenderId())){
-                            //         ACKMessageDTO ack=new ACKMessageDTO();
-                            //         ack.setchatid(msg.getchatid());
-                            //         ack.setmsgid(msg.getmsgid());
-                            //         ack.setstatus("read");
-                            //         Sinks.Many<String> ack_sink=usersink.get(updmsg.getSenderId());
-                            //         return Mono.fromCallable(()->objectMapper.writeValueAsString(ack))
-                            //         .flatMap(ackjson->{
-                            //             ack_sink.tryEmitNext(ackjson);
-                            //             return Mono.empty();
-                            //         })
-                            //         .onErrorResume(e->{
-                            //             System.out.println(e);
-                            //             return Mono.empty();
-                            //         });
-                            //     }
-                            //     else{
-                            //         return Mono.empty();
-                            //     }
-                            // });
-                            notificationService.clear(Userid, data.getuserchatid());
-                            return Mono.empty();
-                        })
-                        .onErrorResume(e->{
-                            System.out.println(e);
-                            return Mono.empty();
-                        });
-                    }).then();
-                }
+            }).then();
+    }
+    if(data.getpurpose().equals("load-more")){
+        Integer space=Integer.parseInt(data.getmsgid());
+        return messageInfoRepo.loadforroom(data.getuserchatid(), space, data.gettime())
+            .collectList()
+            .flatMap(msgs -> {
+                Map<String, Object> batch = new HashMap<>();
+                batch.put("type", "batch");
+                batch.put("chatid", data.getuserchatid());
+                batch.put("hasmore", msgs.size() == 60);
+                batch.put("msgs", msgs);
+                notificationService.clear(Userid, data.getuserchatid());
+                return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                    .doOnNext(sender_sink::tryEmitNext)
+                    .onErrorResume(e -> {
+                        System.out.println(e);
+                        return Mono.empty();
+                    });
+            }).then();
+    }
+}
+                System.out.print(json);
+if(data.getpurpose().equals("load")){
+    userstatus.compute(Userid, (key,chatmap)->{
+        if(chatmap==null){
+            chatmap=new ConcurrentHashMap<>();
+        }
+        chatmap.put(data.getuserchatid(),"active");
+        return chatmap;
+    });
+    Integer space=Integer.parseInt(data.getmsgid());
+    System.out.println("load msg "+space);
+    return messageInfoRepo.load(Userid, data.getuserchatid(), space, LocalDateTime.now())
+        .collectList()
+        .doOnNext(msgs->System.out.println("onnext "+msgs.size()))
+        .flatMap(msgs -> {
+            System.out.println("batch size:"+msgs.size());
+            Map<String, Object> batch = new HashMap<>();
+            batch.put("type", "batch");
+            batch.put("chatid", data.getuserchatid());
+            batch.put("hasmore", msgs.size() == 60);
+            batch.put("msgs", msgs);
+            notificationService.clear(Userid, data.getuserchatid());
+            return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                .doOnNext(sender_sink::tryEmitNext)
+                .onErrorResume(e -> {
+                    System.out.println(e);
+                    return Mono.empty();
+                });
+        }).then();
+}
+else if(data.getpurpose().equals("load-more")){
+    Integer space=Integer.parseInt(data.getmsgid());
+    System.out.println("load msg more"+space);
+    return messageInfoRepo.load(Userid, data.getuserchatid(), space, data.gettime())
+        .collectList()
+        .flatMap(msgs -> {
+            System.out.println("batch size:"+msgs.size());
+            Map<String, Object> batch = new HashMap<>();
+            batch.put("type", "batch");
+            batch.put("chatid", data.getuserchatid());
+            batch.put("hasmore", msgs.size() == 60);
+            batch.put("msgs", msgs);
+            notificationService.clear(Userid, data.getuserchatid());
+            return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                .doOnNext(sender_sink::tryEmitNext)
+                .onErrorResume(e -> {
+                    System.out.println(e);
+                    return Mono.empty();
+                });
+        }).then();
+}
                 else if(data.getpurpose().equals("check-in")){
                     LocalDateTime now=LocalDateTime.now();
                     String chatid=data.getuserchatid();

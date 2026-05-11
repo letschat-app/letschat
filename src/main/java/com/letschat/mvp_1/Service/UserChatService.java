@@ -5,13 +5,16 @@ import java.time.LocalDateTime;
 import org.springframework.stereotype.Component;
 
 import com.letschat.mvp_1.DTOs.UserSearchResult;
+import com.letschat.mvp_1.Models.ChatSpace;
 import com.letschat.mvp_1.Models.UserChatInfo;
 import com.letschat.mvp_1.Models.UserInfo;
+import com.letschat.mvp_1.Repositories.ChatSpaceRepo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
 import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Component
@@ -20,11 +23,13 @@ public class UserChatService {
     private final UserChatInfoRepo userChatInfoRepo;
     private final IdTableRepo idTableRepo;
     private final MyWebSocketHandler myWebSocketHandler;
-    public UserChatService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,IdTableRepo idTableRepo,MyWebSocketHandler myWebSocketHandler){
+    private final ChatSpaceRepo chatSpaceRepo;
+    public UserChatService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,IdTableRepo idTableRepo,MyWebSocketHandler myWebSocketHandler,ChatSpaceRepo chatSpaceRepo){
         this.userInfoRepo=userInfoRepo;
         this.userChatInfoRepo=userChatInfoRepo;
         this.idTableRepo=idTableRepo;
         this.myWebSocketHandler=myWebSocketHandler;
+        this.chatSpaceRepo=chatSpaceRepo;
     }
 
     // public Mono<String> addchat1(String SenderId,String RecieverId){
@@ -178,4 +183,14 @@ public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
         })
         .switchIfEmpty(Mono.just("failed"));
 }
+
+
+    public Mono<String> addspace(ChatSpace data){
+        return chatSpaceRepo.save(data)
+        .flatMap(space->Mono.just("success"));
+    }
+
+    public Flux<ChatSpace> getspace(String chatid){
+        return chatSpaceRepo.findByChatId(chatid);
+    }
 }
