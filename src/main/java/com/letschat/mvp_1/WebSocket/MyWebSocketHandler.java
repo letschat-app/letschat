@@ -103,6 +103,10 @@ public class MyWebSocketHandler implements WebSocketHandler{
 
     Mono<Void> recieve = session.receive()
         .timeout(Duration.ofSeconds(60))
+        .onErrorResume(e -> {
+            System.out.println("checkin timeout: " + e.getMessage());
+            return Mono.empty();
+        })
         .flatMap(msg -> {
             String payload = msg.getPayloadAsText();
             if ("ping".equals(payload)) {
@@ -115,7 +119,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
                 err.printStackTrace();
                 return Mono.empty();
             });
-        })
+        },32)
         .doOnError(err -> System.out.println("error:" + err.getMessage()))
         .doFinally(status -> {
             String uid = userid.remove(sessionid);
@@ -143,7 +147,8 @@ public class MyWebSocketHandler implements WebSocketHandler{
             .map(session::textMessage)
     );
 
-    return connect.then(Mono.when(recieve, send));
+   // return connect.then(Mono.when(recieve, send));
+    return Mono.when(connect, recieve, send);
 }
     public Mono<String> getusername(String chatId,String userId){
         System.out.println(chatId+userId);
