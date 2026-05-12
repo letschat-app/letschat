@@ -12,7 +12,7 @@ public class ChatUpdateDTO {
     @JsonProperty("usermsgId")
     private String usermsgId;
     @JsonProperty("timestamp")
-    @JsonFormat(pattern="yyyy-MM-dd HH:mm:ss")
+    //@JsonFormat(pattern="yyyy-MM-dd HH:mm:ss")
     private LocalDateTime timestamp;
 
     public ChatUpdateDTO(){}
