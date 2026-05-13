@@ -247,6 +247,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
 
 
     public Mono<String> getType(String chatid){
+        if (chatid == null) return Mono.error(new RuntimeException("chatid is null"));
         return Mono.defer(()->{
             String type=chatypes.get(chatid);
             if(type != null){
@@ -433,9 +434,16 @@ private void fireNotification(String receiverId, String chatId,
     public Mono<Void> loadmsg(String sessionid,String json){
         System.out.println("load msg called");
         String Userid=userid.get(sessionid);
+        if (Userid == null) {
+            System.out.println("loadmsg: session not found " + sessionid);
+            return Mono.empty(); // ← guard
+        }
         Sinks.Many<String> sender_sink=usersink.get(Userid);
        // String Chatid;
-       
+        if (sender_sink == null) {
+            System.out.println("loadmsg: sink not found for " + Userid);
+            return Mono.empty(); // ← guard
+        }
         return Mono.fromCallable(()->objectMapper.readValue(json,ChatUpdateDTO.class))
             .flatMap(data->{
                 return getType(data.getuserchatid())
@@ -667,7 +675,11 @@ else if(data.getpurpose().equals("load-more")){
                 else{
                     return Mono.empty();
                 }
-            });});
+            });}
+        ).onErrorResume(e->{
+            System.out.println(e);
+            return Mono.empty();
+        });
     }
 
     public Mono<Void> onconnect(String Userid){
