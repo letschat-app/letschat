@@ -33,7 +33,7 @@ public class ScheduleService {
     //     .flatMap(msg->myWebSocketHandler.send(msg).then(scheduleRepo.deleteById(msg.getMessageId()))).subscribe();
     // }
 
-    @Scheduled(cron = "0 * * * * *")
+    @Scheduled(cron = "0 */5 * * * *")
     public void process0() {
         System.out.println("analyzing");
         scheduleRepo.findMesages()
