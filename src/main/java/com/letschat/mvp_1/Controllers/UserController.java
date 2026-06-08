@@ -164,5 +164,8 @@ public class UserController {
     }
     
 
-    
+    @GetMapping("/wake-up")
+    public Mono<String> wakeup(){
+        return Mono.just("alive");
+    }
 }
