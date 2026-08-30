@@ -295,12 +295,7 @@ public Mono<Void> onrecieve(String sessionId, String json) {
             }
 
             // ── NORMAL FLOW ──────────────────────────────────────────────────
-            return messageInfoRepo.insert(
-                    msgId, chatId, userId,
-                    data.gettype(), data.getcontent(),
-                    data.getrepliedto(), data.getforwardedfrom(),
-                    data.gettimestamp(), data.getspaceid()
-                )
+            return Mono.just(true)
                 .flatMap(info -> getType(chatId)
                     .flatMap(type -> {
 
@@ -346,18 +341,12 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                             LocalDateTime deliveredTime = LocalDateTime.now();
 
                                             return sendToSinkAsync(receiverSink, msg)
-                                                .then(messageTrackHistoryRepo.insert(
-                                                    msgId, userId, receiverId, status, deliveredTime
-                                                ))
                                                 .thenReturn(status);
 
                                         } else {
                                             // fireNotification(receiverId, chatId, username, data, type);
 
-                                            return messageTrackHistoryRepo.insert(
-                                                    msgId, userId, receiverId, "pending", null
-                                                )
-                                                .thenReturn("pending");
+                                            return Mono.just("pending");
                                         }
                                     })
                                     .reduce("read", (acc, curr) -> {
