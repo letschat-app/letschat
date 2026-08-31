@@ -345,6 +345,9 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                             LocalDateTime deliveredTime = LocalDateTime.now();
 
                                             return sendToSinkAsync(receiverSink, msg)
+                                                 .then(messageTrackHistoryRepo.insert(
+                                                    msgId, userId, receiverId, status, deliveredTime
+                                                ))
                                                 .thenReturn(status);
 
                                         } else {
