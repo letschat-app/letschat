@@ -264,7 +264,6 @@ public void removeUserFromChatCache(String chatId, String userId) {
 public Mono<Void> onrecieve(String sessionId, String json) {
 
     return Mono.fromCallable(() -> objectMapper.readValue(json, ReceivingMessageDTO.class))
-        .subscribeOn(Schedulers.boundedElastic())
         .flatMap(data -> {
 
             if (data.getchatid() == null) {
@@ -391,7 +390,6 @@ private SendingMessageDTO buildMsg(String msgId, String chatId,
 private Mono<Void> sendToSinkAsync(Sinks.Many<String> sink, Object payload) {
     if (sink == null) return Mono.empty();
     return Mono.fromCallable(() -> objectMapper.writeValueAsString(payload))
-        .subscribeOn(Schedulers.boundedElastic())
         .doOnNext(sink::tryEmitNext)
         .then();
 }
