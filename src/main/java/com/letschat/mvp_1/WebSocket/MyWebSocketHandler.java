@@ -294,7 +294,12 @@ public Mono<Void> onrecieve(String sessionId, String json) {
             }
 
             // ── NORMAL FLOW ──────────────────────────────────────────────────
-            return Mono.just(true)
+            return messageInfoRepo.insert(
+                    msgId, chatId, userId,
+                    data.gettype(), data.getcontent(),
+                    data.getrepliedto(), data.getforwardedfrom(),
+                    data.gettimestamp(), data.getspaceid()
+                )
                 .flatMap(info -> getType(chatId)
                     .flatMap(type -> {
 
@@ -345,7 +350,10 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                         } else {
                                             // fireNotification(receiverId, chatId, username, data, type);
 
-                                            return Mono.just("pending");
+                                             return messageTrackHistoryRepo.insert(
+                                                    msgId, userId, receiverId, "pending", null
+                                                )
+                                                .thenReturn("pending");
                                         }
                                     })
                                     .reduce("read", (acc, curr) -> {
