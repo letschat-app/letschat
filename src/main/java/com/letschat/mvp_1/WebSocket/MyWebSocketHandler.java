@@ -263,7 +263,9 @@ public void removeUserFromChatCache(String chatId, String userId) {
 
 public Mono<Void> onrecieve(String sessionId, String json) {
 
-    return Mono.fromCallable(() -> objectMapper.readValue(json, ReceivingMessageDTO.class))
+    return Mono.fromCallable(() ->
+            objectMapper.readValue(json, ReceivingMessageDTO.class)
+        )
         .flatMap(data -> {
 
             if (data.getchatid() == null) {
@@ -280,104 +282,241 @@ public Mono<Void> onrecieve(String sessionId, String json) {
 
             Sinks.Many<String> senderSink = usersink.get(userId);
 
-            // ── INDICATOR ────────────────────────────────────────────────────
+            // INDICATOR
             if ("indicator".equals(data.gettype())) {
+
                 return getusername(chatId, userId)
                     .flatMap(username ->
                         getUserIds(chatId, userId)
                             .flatMap(receiverId -> {
-                                Sinks.Many<String> receiverSink = usersink.get(receiverId);
-                                SendingMessageDTO msg = buildMsg(null, chatId, data, username, userId);
+
+                                Sinks.Many<String> receiverSink =
+                                    usersink.get(receiverId);
+
+                                SendingMessageDTO msg =
+                                    buildMsg(
+                                        null,
+                                        chatId,
+                                        data,
+                                        username,
+                                        userId
+                                    );
+
                                 return sendToSinkAsync(receiverSink, msg);
-                            }).then()
+
+                            })
+                            .then()
                     );
             }
 
-            // ── NORMAL FLOW ──────────────────────────────────────────────────
-            return messageInfoRepo.insert(
-                    msgId, chatId, userId,
-                    data.gettype(), data.getcontent(),
-                    data.getrepliedto(), data.getforwardedfrom(),
-                    data.gettimestamp(), data.getspaceid()
-                )
-                .flatMap(info -> getType(chatId)
-                    .flatMap(type -> {
-
-                        // ── CLASSROOM / ROOM ──────────────────────────────────
-                        if ("classroom".equals(type) || "room".equals(type)) {
-
-                            return sendAckAsync(senderSink, chatId, data.gettempmsgid(), msgId, "read")
-                                .then(getusername(chatId, userId))
-                                .flatMap(username ->
-                                    getUserIds(chatId, userId)
-                                        .flatMap(receiverId -> {
-                                            System.out.println("sednerid:"+userId+"sendername:"+username);
-                                            Sinks.Many<String> receiverSink = usersink.get(receiverId);
-                                            SendingMessageDTO msg = buildMsg(msgId, chatId, data, username, userId);
-                                            fireNotification(receiverId, chatId, username, data, type);
-                                            if (receiverSink != null) {
-                                               // fireNotification(receiverId, chatId, username, data, type);
-                                                return sendToSinkAsync(receiverSink, msg);//.doOnNext(fireNotification(receiverId, chatId, username, data, type));
-                                            }
-                                            return Mono.empty();
-                                        }).then()
-                                );
-                        }
-
-                        // ── NORMAL CHAT ───────────────────────────────────────
-                        return getusername(chatId, userId)
-                            .flatMap(username ->
-                                getUserIds(chatId, userId)
-                                    .flatMap(receiverId -> {
-                                        System.out.println("sednerid:"+userId+"sendername:"+username);
-                                        Sinks.Many<String> receiverSink = usersink.get(receiverId);
-                                        SendingMessageDTO msg = buildMsg(msgId, chatId, data, username, userId);
-                                        fireNotification(receiverId, chatId, username, data, type);
-                                        if (receiverSink != null) {
-                                            userstatus.computeIfAbsent(receiverId, k -> new ConcurrentHashMap<>())
-                                                      .putIfAbsent(chatId, "in-active");
-
-                                            boolean isActive = "active".equals(
-                                                userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId)
-                                            );
-
-                                            String status = isActive ? "read" : "delivered";
-                                            LocalDateTime deliveredTime = LocalDateTime.now();
-
-                                            return sendToSinkAsync(receiverSink, msg)
-                                                 .then(messageTrackHistoryRepo.insert(
-                                                    msgId, userId, receiverId, status, deliveredTime
-                                                ))
-                                                .thenReturn(status);
-
-                                        } else {
-                                            // fireNotification(receiverId, chatId, username, data, type);
-
-                                             return messageTrackHistoryRepo.insert(
-                                                    msgId, userId, receiverId, "pending", null
-                                                )
-                                                .thenReturn("pending");
-                                        }
-                                    })
-                                    .reduce("read", (acc, curr) -> {
-                                        if ("pending".equals(acc) || "pending".equals(curr)) return "pending";
-                                        if ("delivered".equals(acc) || "delivered".equals(curr)) return "delivered";
-                                        return "read";
-                                    })
-                                    .flatMap(finalStatus ->
-                                        sendAckAsync(senderSink, chatId, data.gettempmsgid(), msgId, finalStatus)
+            // NORMAL FLOW
+            return getType(chatId)
+                .flatMap(type ->
+                    getusername(chatId, userId)
+                        .flatMap(username ->
+                            getUserIds(chatId, userId)
+                                .flatMap(receiverId ->
+                                    sendMessage(
+                                        receiverId,
+                                        chatId,
+                                        userId,
+                                        username,
+                                        type,
+                                        data,
+                                        msgId
                                     )
-                            );
+                                )
+                                .collectList()
+                                .flatMap(results -> {
 
-                    }).then()
-                ).then()
-                .doOnSuccess(v -> {adminService.onMessageSent();adminService.onUserActivity(userId);});
+                                    String finalStatus = "read";
+
+                                    for (MessageResult result : results) {
+
+                                        if ("pending".equals(result.status())) {
+                                            finalStatus = "pending";
+                                            break;
+                                        }
+
+                                        if ("delivered".equals(result.status())) {
+                                            finalStatus = "delivered";
+                                        }
+                                    }
+
+                                    // SEND ACK AFTER MESSAGE
+                                    return sendAckAsync(
+                                        senderSink,
+                                        chatId,
+                                        data.gettempmsgid(),
+                                        msgId,
+                                        finalStatus
+                                    )
+
+                                    // MESSAGE INFO DB AFTER ACK
+                                    .then(
+                                        messageInfoRepo.insert(
+                                            msgId,
+                                            chatId,
+                                            userId,
+                                            data.gettype(),
+                                            data.getcontent(),
+                                            data.getrepliedto(),
+                                            data.getforwardedfrom(),
+                                            data.gettimestamp(),
+                                            data.getspaceid()
+                                        )
+                                    )
+
+                                    // TRACK HISTORY DB LAST
+                                    .then(
+                                        Flux.fromIterable(results)
+                                            .flatMap(result ->
+                                                messageTrackHistoryRepo.insert(
+                                                    msgId,
+                                                    userId,
+                                                    result.receiverId(),
+                                                    result.status(),
+                                                    result.deliveredTime()
+                                                )
+                                            )
+                                            .then()
+                                    );
+                                })
+                        )
+                )
+                .then()
+                .doOnSuccess(v -> {
+                    adminService.onMessageSent();
+                    adminService.onUserActivity(userId);
+                });
         })
         .onErrorResume(e -> {
             System.out.println("load msg calling");
             return loadmsg(sessionId, json);
-        }).then();
+        })
+        .then();
 }
+
+
+private Mono<MessageResult> sendMessage(
+        String receiverId,
+        String chatId,
+        String userId,
+        String username,
+        String type,
+        ReceivingMessageDTO data,
+        String msgId
+) {
+
+    System.out.println(
+        "sednerid:" + userId +
+        "sendername:" + username
+    );
+
+    Sinks.Many<String> receiverSink = usersink.get(receiverId);
+
+    SendingMessageDTO msg =
+        buildMsg(
+            msgId,
+            chatId,
+            data,
+            username,
+            userId
+        );
+
+    fireNotification(
+        receiverId,
+        chatId,
+        username,
+        data,
+        type
+    );
+
+    // CLASSROOM / ROOM
+    if ("classroom".equals(type) || "room".equals(type)) {
+
+        if (receiverSink != null) {
+
+            return sendToSinkAsync(
+                receiverSink,
+                msg
+            ).thenReturn(
+                new MessageResult(
+                    receiverId,
+                    "read",
+                    null
+                )
+            );
+        }
+
+        return Mono.just(
+            new MessageResult(
+                receiverId,
+                "read",
+                null
+            )
+        );
+    }
+
+    // NORMAL CHAT
+    if (receiverSink != null) {
+
+        userstatus
+            .computeIfAbsent(
+                receiverId,
+                k -> new ConcurrentHashMap<>()
+            )
+            .putIfAbsent(
+                chatId,
+                "in-active"
+            );
+
+        boolean isActive =
+            "active".equals(
+                userstatus
+                    .getOrDefault(
+                        receiverId,
+                        new ConcurrentHashMap<>()
+                    )
+                    .get(chatId)
+            );
+
+        String status =
+            isActive
+                ? "read"
+                : "delivered";
+
+        LocalDateTime deliveredTime =
+            LocalDateTime.now();
+
+        return sendToSinkAsync(
+            receiverSink,
+            msg
+        ).thenReturn(
+            new MessageResult(
+                receiverId,
+                status,
+                deliveredTime
+            )
+        );
+    }
+
+    // OFFLINE
+    return Mono.just(
+        new MessageResult(
+            receiverId,
+            "pending",
+            null
+        )
+    );
+}
+
+
+private record MessageResult(
+    String receiverId,
+    String status,
+    LocalDateTime deliveredTime
+) {}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
