@@ -344,43 +344,47 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                     }
 
                                     // SEND ACK AFTER MESSAGE
-                                    return sendAckAsync(
-                                        senderSink,
-                                        chatId,
-                                        data.gettempmsgid(),
-                                        msgId,
-                                        finalStatus
-                                    )
+                                    List<String> receiverIds = results.stream()
+    .map(MessageResult::receiverId)
+    .toList();
 
-                                    // MESSAGE INFO DB AFTER ACK
-                                    .then(
-                                        messageInfoRepo.insert(
-                                            msgId,
-                                            chatId,
-                                            userId,
-                                            data.gettype(),
-                                            data.getcontent(),
-                                            data.getrepliedto(),
-                                            data.getforwardedfrom(),
-                                            data.gettimestamp(),
-                                            data.getspaceid()
-                                        )
-                                    )
+List<String> statuses = results.stream()
+    .map(MessageResult::status)
+    .toList();
 
-                                    // TRACK HISTORY DB LAST
-                                    .then(
-                                        Flux.fromIterable(results)
-                                            .flatMap(result ->
-                                                messageTrackHistoryRepo.insert(
-                                                    msgId,
-                                                    userId,
-                                                    result.receiverId(),
-                                                    result.status(),
-                                                    result.deliveredTime()
-                                                )
-                                            )
-                                            .then()
-                                    );
+List<LocalDateTime> deliveredTimes = results.stream()
+    .map(MessageResult::deliveredTime)
+    .toList();
+
+return sendAckAsync(
+    senderSink,
+    chatId,
+    data.gettempmsgid(),
+    msgId,
+    finalStatus
+)
+.then(
+    messageInfoRepo.insert(
+        msgId,
+        chatId,
+        userId,
+        data.gettype(),
+        data.getcontent(),
+        data.getrepliedto(),
+        data.getforwardedfrom(),
+        data.gettimestamp(),
+        data.getspaceid()
+    )
+)
+.then(
+    messageTrackHistoryRepo.batchInsert(
+        msgId,
+        userId,
+        receiverIds,
+        statuses,
+        deliveredTimes
+    )
+);
                                 })
                         )
                 )

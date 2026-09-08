@@ -11,7 +11,7 @@ import io.micrometer.common.lang.Nullable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-public interface MessageTrackHistoryRepo extends ReactiveCrudRepository<MessageTrackHistory, Long>{
+public interface MessageTrackHistoryRepo extends ReactiveCrudRepository<MessageTrackHistory, Long>,MessageTrackHistoryRepoCustom{
     @Query("""
             insert into "MessageTrackHistory" ("MessageId","SenderId","RecieverId","Status","DeliverTime")
             values(:msgid,:senderid,:recieverid,:status,:delivertime) returning *
