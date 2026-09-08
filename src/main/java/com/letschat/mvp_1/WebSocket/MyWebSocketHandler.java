@@ -315,7 +315,7 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                     getusername(chatId, userId)
                         .flatMap(username ->
                             getUserIds(chatId, userId)
-                                .flatMap(receiverId ->
+                                .<MessageResult>flatMap(receiverId ->
                                     sendMessage(
                                         receiverId,
                                         chatId,
