@@ -168,7 +168,19 @@ public class PulseService {
         pulse.setExpiresAt(expiresAt);
         pulse.setStatus("active");
 
-        return updateStreakMono.then(pulseInfoRepo.save(pulse));
+        System.out.println("[PulseService] Executing createPulse for userId: " + userId + ", type: " + pulse.getType());
+        return updateStreakMono
+                .onErrorResume(err -> {
+                    System.err.println("[PulseService] Warning: Streak update failed: " + err.getMessage());
+                    err.printStackTrace();
+                    return Mono.empty();
+                })
+                .then(pulseInfoRepo.save(pulse))
+                .doOnNext(saved -> System.out.println("[PulseService] Pulse saved to DB with ID: " + saved.getPulseId()))
+                .doOnError(err -> {
+                    System.err.println("[PulseService] FATAL DB ERROR saving pulse: " + err.getMessage());
+                    err.printStackTrace();
+                });
     }
 
     public Mono<MyPulsesResponseDTO> getMyPulses(String userId) {

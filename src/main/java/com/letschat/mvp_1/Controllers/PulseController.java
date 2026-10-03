@@ -46,11 +46,15 @@ public class PulseController {
     }
 
     @PostMapping("/create")
-    public Mono<ResponseEntity<PulseInfo>> createPulse(
+    public Mono<ResponseEntity<Object>> createPulse(
             @RequestHeader("User-Id") String userId,
             @RequestBody PulseCreateRequest request) {
         return pulseService.createPulse(request, userId)
-                .map(pulse -> ResponseEntity.status(201).body(pulse));
+                .map(pulse -> ResponseEntity.status(201).<Object>body(pulse))
+                .onErrorResume(e -> {
+                    System.err.println("[PulseController] Failed to create pulse for user " + userId + ": " + e.getMessage());
+                    return Mono.just(ResponseEntity.status(500).body(Map.of("error", e.getMessage() != null ? e.getMessage() : "Failed to create pulse")));
+                });
     }
 
     @GetMapping("/mine")
