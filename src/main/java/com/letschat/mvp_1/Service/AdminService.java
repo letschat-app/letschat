@@ -43,6 +43,7 @@ public class AdminService {
     public void onUserConnected(String userId) {
         activeUsersNow.add(userId);
         activeUsersToday.add(userId);
+        dailyActiveUsers.computeIfAbsent(java.time.LocalDate.now().toString(), k -> ConcurrentHashMap.newKeySet()).add(userId);
     }
 
     public void onUserDisconnected(String userId) {
@@ -51,6 +52,7 @@ public class AdminService {
 
     public void onUserActivity(String userId) {
         activeUsersToday.add(userId);
+        dailyActiveUsers.computeIfAbsent(java.time.LocalDate.now().toString(), k -> ConcurrentHashMap.newKeySet()).add(userId);
     }
 
     // ===== MESSAGE EVENTS =====
@@ -124,27 +126,36 @@ public class AdminService {
     public Mono<Map<String, Object>> getSpaceAdoptionStats() {
 
         return Mono.zip(
-            messageInfoRepo.getTotalUsers(),
-            messageInfoRepo.getDefaultOnlyUsers(),
-            messageInfoRepo.getMultiSpaceUsers(),
-            messageInfoRepo.getCustomSpaceUsers()
+            messageInfoRepo.getTotalUsers().defaultIfEmpty(0L),
+            messageInfoRepo.getDefaultOnlyUsers().defaultIfEmpty(0L),
+            messageInfoRepo.getMultiSpaceUsers().defaultIfEmpty(0L),
+            messageInfoRepo.getCustomSpaceUsers().defaultIfEmpty(0L)
         ).map(t -> {
 
-            long total = t.getT1();
-            long defaultOnly = t.getT2();
-            long multi = t.getT3();
-            long custom = t.getT4();
+            long total = t.getT1() != null ? t.getT1() : 0L;
+            long defaultOnly = t.getT2() != null ? t.getT2() : 0L;
+            long multi = t.getT3() != null ? t.getT3() : 0L;
+            long custom = t.getT4() != null ? t.getT4() : 0L;
 
-            return Map.of(
-                "totalUsers", total,
-                "defaultOnlyUsers", defaultOnly,
-                "multiSpaceUsers", multi,
-                "customSpaceUsers", custom,
+            Map<String, Object> res = new ConcurrentHashMap<>();
+            res.put("totalUsers", total);
+            res.put("defaultOnlyUsers", defaultOnly);
+            res.put("multiSpaceUsers", multi);
+            res.put("customSpaceUsers", custom);
 
-                "defaultOnlyPercent", total == 0 ? 0 : (defaultOnly * 100.0 / total),
-                "multiSpacePercent", total == 0 ? 0 : (multi * 100.0 / total),
-                "customSpacePercent", total == 0 ? 0 : (custom * 100.0 / total)
-            );
-        });
+            res.put("defaultOnlyPercent", total == 0 ? 0.0 : (defaultOnly * 100.0 / total));
+            res.put("multiSpacePercent", total == 0 ? 0.0 : (multi * 100.0 / total));
+            res.put("customSpacePercent", total == 0 ? 0.0 : (custom * 100.0 / total));
+
+            return res;
+        }).defaultIfEmpty(Map.of(
+            "totalUsers", 0L,
+            "defaultOnlyUsers", 0L,
+            "multiSpaceUsers", 0L,
+            "customSpaceUsers", 0L,
+            "defaultOnlyPercent", 0.0,
+            "multiSpacePercent", 0.0,
+            "customSpacePercent", 0.0
+        ));
     }
 }

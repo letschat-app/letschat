@@ -101,4 +101,18 @@ group by "ChatId" having count(distinct "UserId")=2
                 select "UserName" from "UserChat" where "ChatId"=:cid and "UserId"=:uid
                         """)
                 Mono<String> getUsername(String cid,String uid);
+
+        @Query("""
+                SELECT DISTINCT uc2."UserId"
+                FROM "UserChat" uc1
+                JOIN "UserChat" uc2 ON uc1."ChatId" = uc2."ChatId"
+                WHERE uc1."UserId" = :userId AND uc2."UserId" != :userId AND uc1."Status" = 'allowed'
+                """)
+        Flux<String> findContactUserIds(String userId);
+
+        @Query("""
+                SELECT * FROM "UserChat"
+                WHERE "ChatId" = :chatId AND "Status" = 'allowed' AND ("Role" != 'faculty' OR "Role" IS NULL)
+                """)
+        Flux<UserChatInfo> findClassroomStudents(String chatId);
 }

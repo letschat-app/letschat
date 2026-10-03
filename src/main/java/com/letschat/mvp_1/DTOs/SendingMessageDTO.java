@@ -98,5 +98,14 @@ public class SendingMessageDTO {
     public void setspaceid(Integer spaceid){
         this.spaceid=spaceid;
     }
+
+    private PollUpdateDTO poll;
+
+    public PollUpdateDTO getpoll(){
+        return poll;
+    }
+    public void setpoll(PollUpdateDTO poll){
+        this.poll=poll;
+    }
 }
 

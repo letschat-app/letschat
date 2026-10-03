@@ -18,6 +18,8 @@ public class MessageTrackHistory {
     private String Status;
     private LocalDateTime DeliverTime;
     private LocalDateTime ReadTime;
+    @Column("MediaOpenedTime")
+    private LocalDateTime MediaOpenedTime;
     private Boolean DeleteForSender;
     private Boolean DeleteForReceiver;
 
@@ -82,6 +84,13 @@ public class MessageTrackHistory {
     }
     public void setReadTime(LocalDateTime ReadTime){
         this.ReadTime=ReadTime;
+    }
+
+    public LocalDateTime getMediaOpenedTime(){
+        return MediaOpenedTime;
+    }
+    public void setMediaOpenedTime(LocalDateTime MediaOpenedTime){
+        this.MediaOpenedTime=MediaOpenedTime;
     }
 
     public Boolean getDeleteForSender(){

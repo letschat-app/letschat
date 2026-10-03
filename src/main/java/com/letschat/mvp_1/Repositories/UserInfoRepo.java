@@ -59,4 +59,19 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
                 select "RoomNickName" from "UserInfo" where "UserId"=:id
                 """)
                 Mono<String> getroomname(String id);
+
+        @Query("select * from \"UserInfo\" where \"Email\"=:email limit 1")
+        Mono<UserInfo> findByEmail(String email);
+
+        @Query("select * from \"UserInfo\" where \"UserId\"=:identifier or \"Email\"=:identifier limit 1")
+        Mono<UserInfo> findByIdentifier(String identifier);
+
+        @Query("insert into \"UserInfo\"(\"UserId\",\"PrivateName\",\"PublicName\",\"Age\",\"Gender\",\"Location\",\"Password\",\"Email\") values(:UserId,:PrivateName,:PublicName,:Age,:Gender,:Location,:Password,:Email) returning *")
+        Mono<UserInfo> insertWithEmail(String UserId, String PrivateName, String PublicName, int Age, String Gender, long Location, String Password, String Email);
+
+        @Query("update \"UserInfo\" set \"Password\"=:newPassword where \"UserId\"=:identifier or \"Email\"=:identifier returning *")
+        Mono<UserInfo> updatePassword(String identifier, String newPassword);
+
+        @Query("update \"UserInfo\" set \"Is2FAEnabled\"=:enabled where \"UserId\"=:userId or \"Email\"=:userId returning *")
+        Mono<UserInfo> update2FAStatus(String userId, boolean enabled);
 }

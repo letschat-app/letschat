@@ -46,8 +46,9 @@ public interface GroupInfoRepo extends ReactiveCrudRepository<GroupInfoModel, St
             Mono<UserChatInfo> removeOrLeaveGroup(String status,String chatid,String userid);
 
     @Query("""
-                    update "GroupInfo" set "GroupName"=:name and "GroupProfilePath"=:profile where "GroupId"=:id returning *
+                    update "GroupInfo" set "GroupName"=:name, "GroupProfilePath"=:profile where "GroupId"=:id returning *
                     """)
         Mono<GroupInfoModel> update(String name,String profile,String id);
 }
+
 

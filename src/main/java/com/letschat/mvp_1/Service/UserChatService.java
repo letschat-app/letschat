@@ -17,6 +17,8 @@ import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import com.letschat.mvp_1.Repositories.UserPulseStreakRepo;
+
 @Component
 public class UserChatService {
     private final UserInfoRepo userInfoRepo;
@@ -24,12 +26,15 @@ public class UserChatService {
     private final IdTableRepo idTableRepo;
     private final MyWebSocketHandler myWebSocketHandler;
     private final ChatSpaceRepo chatSpaceRepo;
-    public UserChatService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,IdTableRepo idTableRepo,MyWebSocketHandler myWebSocketHandler,ChatSpaceRepo chatSpaceRepo){
+    private final UserPulseStreakRepo userPulseStreakRepo;
+
+    public UserChatService(UserInfoRepo userInfoRepo,UserChatInfoRepo userChatInfoRepo,IdTableRepo idTableRepo,MyWebSocketHandler myWebSocketHandler,ChatSpaceRepo chatSpaceRepo, UserPulseStreakRepo userPulseStreakRepo){
         this.userInfoRepo=userInfoRepo;
         this.userChatInfoRepo=userChatInfoRepo;
         this.idTableRepo=idTableRepo;
         this.myWebSocketHandler=myWebSocketHandler;
         this.chatSpaceRepo=chatSpaceRepo;
+        this.userPulseStreakRepo=userPulseStreakRepo;
     }
 
     // public Mono<String> addchat1(String SenderId,String RecieverId){
@@ -143,7 +148,14 @@ public class UserChatService {
             User.setUserName(user.getUserName());
             User.setRole(user.getRole());
             User.setProfile(user.getUserProfile());
-            return Mono.just(User);
+
+            return userPulseStreakRepo.findById(user.getUserId())
+                    .map(s -> s.getCurrentStreak() != null ? s.getCurrentStreak() : 0)
+                    .defaultIfEmpty(0)
+                    .map(streak -> {
+                        User.setPulseStreak(streak);
+                        return User;
+                    });
         });
     }
 public Mono<String> updateInfo(UserSearchResult info, String Chatid) {

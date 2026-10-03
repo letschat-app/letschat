@@ -21,9 +21,10 @@ public interface MessageTrackHistoryRepo extends ReactiveCrudRepository<MessageT
 
      @Query("""
           update "MessageTrackHistory" 
-          set "Status"='read' ,"ReadTime"=:time,"DeliverTime"=:time where ("Status"='pending' or "Status"='delivered')
-and "MessageId"=:msgid
-and "RecieverId"=:userid returning *
+          set "Status"='read', "ReadTime"=:time, "DeliverTime"=COALESCE("DeliverTime", :time)
+          where ("Status"='pending' or "Status"='delivered')
+            and "MessageId"=:msgid
+            and "RecieverId"=:userid returning *
           """)
     Mono<MessageTrackHistory> updatestatusonchat(String msgid,String userid,LocalDateTime time);
 
@@ -43,7 +44,7 @@ and "RecieverId"=:userid returning *
 
 
         @Query("""
-update "MessageTrackHistory" mt set "Status"='read',"ReadTime"=:time from "MessageInfo" mc join (select * from "UserChat" 
+update "MessageTrackHistory" mt set "Status"='read', "ReadTime"=:time, "DeliverTime"=COALESCE(mt."DeliverTime", :time) from "MessageInfo" mc join (select * from "UserChat" 
 where "ChatId"=:chatid order by "Id" asc limit 1) uc on mc."ChatId"=uc."Id" 
 where mt."MessageId"=mc."MessageId" and mt."RecieverId"=:userid and (mt."Status"='delivered' or mt."Status"='pending') and mc."SpaceId"=:space
  returning *
@@ -96,4 +97,12 @@ where mt."MessageId"=mc."MessageId" and mt."RecieverId"=:userid and (mt."Status"
                        select * from "MessageTrackHistory" where "MessageId"=:msgId 
                        """)
                        Flux<MessageTrackHistory> getmsgid(String msgId);
+
+                @Query("""
+                       UPDATE "MessageTrackHistory"
+                       SET "MediaOpenedTime" = :time
+                       WHERE "MessageId" = :msgId
+                         AND "RecieverId" = :userId returning *
+                       """)
+                Flux<MessageTrackHistory> updateonmediaopened(String userId, String msgId, LocalDateTime time);
 }

@@ -48,24 +48,51 @@ SELECT distinct on (mi."MessageId")
   mi."SenderId" as userid,
   
   mi."Time" as timestamp,
-  mi."RepliedTo" as repliedto,
-(select "ChatId" from "UserChat" uc1 where uc1."Id"=mi."ForwardedFrom" limit 1)as forwardedfrom,
+  CASE 
+    WHEN mi."SenderId" = :Userid THEN (
+      SELECT MAX(mt2."DeliverTime") 
+      FROM "MessageTrackHistory" mt2 
+      WHERE mt2."MessageId" = mi."MessageId"
+    )
+    ELSE NULL
+  END AS delivertime,
 
-  (SELECT CASE 
-                       WHEN mt2."SenderId" = :Userid THEN mt2."Status"
-                       ELSE NULL
-                   END
-            FROM "MessageTrackHistory" mt2
-            WHERE mt2."MessageId" = mi."MessageId"
-              AND (mt2."SenderId" = :Userid OR mt2."RecieverId" = :Userid)
-            ORDER BY 
-                CASE mt2."Status"
-                    WHEN 'pending' THEN 1
-                    WHEN 'delivered' THEN 2
-                    WHEN 'read' THEN 3
-                    ELSE 4
-                END
-            LIMIT 1) AS status,
+  CASE 
+    WHEN mi."SenderId" = :Userid THEN (
+      SELECT CASE 
+        WHEN COUNT(*) = COUNT(CASE WHEN mt2."Status" = 'read' THEN 1 END) THEN MAX(mt2."ReadTime")
+        ELSE NULL
+      END
+      FROM "MessageTrackHistory" mt2 
+      WHERE mt2."MessageId" = mi."MessageId"
+    )
+    ELSE NULL
+  END AS readtime,
+
+  CASE 
+    WHEN mi."SenderId" = :Userid THEN (
+      SELECT MAX(mt2."MediaOpenedTime") 
+      FROM "MessageTrackHistory" mt2 
+      WHERE mt2."MessageId" = mi."MessageId"
+    )
+    ELSE NULL
+  END AS mediaopenedtime,
+
+  mi."RepliedTo" as repliedto,
+  (select "ChatId" from "UserChat" uc1 where uc1."Id"=mi."ForwardedFrom" limit 1) as forwardedfrom,
+
+  CASE 
+    WHEN mi."SenderId" = :Userid THEN (
+      SELECT CASE 
+        WHEN COUNT(*) = COUNT(CASE WHEN mt2."Status" = 'read' THEN 1 END) THEN 'read'
+        WHEN COUNT(CASE WHEN mt2."Status" IN ('delivered', 'read') THEN 1 END) > 0 THEN 'delivered'
+        ELSE 'pending'
+      END
+      FROM "MessageTrackHistory" mt2 
+      WHERE mt2."MessageId" = mi."MessageId"
+    )
+    ELSE NULL
+  END AS status,
 
             CASE
             WHEN mi."SenderId" =:Userid THEN true
@@ -203,6 +230,50 @@ ORDER BY timestamp ASC;
 ) AS sendername,
     mi."SenderId"           AS userid,
     mi."Time"             AS timestamp,
+
+    CASE 
+      WHEN mi."SenderId" = :Userid THEN (
+        SELECT MAX(mt2."DeliverTime") 
+        FROM "MessageTrackHistory" mt2 
+        WHERE mt2."MessageId" = mi."MessageId"
+      )
+      ELSE NULL
+    END AS delivertime,
+
+    CASE 
+      WHEN mi."SenderId" = :Userid THEN (
+        SELECT CASE 
+          WHEN COUNT(*) = COUNT(CASE WHEN mt2."Status" = 'read' THEN 1 END) THEN MAX(mt2."ReadTime")
+          ELSE NULL
+        END
+        FROM "MessageTrackHistory" mt2 
+        WHERE mt2."MessageId" = mi."MessageId"
+      )
+      ELSE NULL
+    END AS readtime,
+
+    CASE 
+      WHEN mi."SenderId" = :Userid THEN (
+        SELECT MAX(mt2."MediaOpenedTime") 
+        FROM "MessageTrackHistory" mt2 
+        WHERE mt2."MessageId" = mi."MessageId"
+      )
+      ELSE NULL
+    END AS mediaopenedtime,
+
+    CASE 
+      WHEN mi."SenderId" = :Userid THEN (
+        SELECT CASE 
+          WHEN COUNT(*) = COUNT(CASE WHEN mt2."Status" = 'read' THEN 1 END) THEN 'read'
+          WHEN COUNT(CASE WHEN mt2."Status" IN ('delivered', 'read') THEN 1 END) > 0 THEN 'delivered'
+          ELSE 'pending'
+        END
+        FROM "MessageTrackHistory" mt2 
+        WHERE mt2."MessageId" = mi."MessageId"
+      )
+      ELSE NULL
+    END AS status,
+
     mi."RepliedTo"        AS repliedto,
     mi."ForwardedFrom"    AS forwardedfrom,
     mi."DeletedBy"        AS isdeletedone,
@@ -220,7 +291,7 @@ ORDER BY mi."Time" DESC
 Limit 60;
 
           """)
-          Flux<LoadMessageDTO> loadforroom(String Chatid,Integer spaceId,LocalDateTime before);
+          Flux<LoadMessageDTO> loadforroom(String Userid,String Chatid,Integer spaceId,LocalDateTime before);
 
 
               @Query("""

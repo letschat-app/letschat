@@ -78,4 +78,21 @@ public class UserSignUpDTO {
     public void setPassword(String Password){
         this.Password=Password;
     }
+
+    private String Email;
+    private String Otp;
+
+    public String getEmail(){
+        return Email;
+    }
+    public void setEmail(String Email){
+        this.Email=Email;
+    }
+
+    public String getOtp(){
+        return Otp;
+    }
+    public void setOtp(String Otp){
+        this.Otp=Otp;
+    }
 }

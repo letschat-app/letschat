@@ -32,7 +32,10 @@ import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
 import reactor.core.publisher.Mono;
 
-//@CrossOrigin(origins="*")
+import com.letschat.mvp_1.Service.OtpService;
+import com.letschat.mvp_1.Repositories.UserInfoRepo;
+import org.springframework.web.bind.annotation.RequestParam;
+
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/user")
@@ -47,11 +50,15 @@ public class UserController {
     private final EventService eventService;
     public final MyWebSocketHandler myWebSocketHandler;
     private final AdminService adminService;
+    private final OtpService otpService;
+    private final UserInfoRepo userInfoRepo;
+
     public UserController(UserSignUpService userSignUpService,UserLoginService userLoginService,
         UserSearchService userSearchService,UserChatService userChatService,
         GroupCreateService groupCreateService,ChatBoxService chatBoxService,
         UserProfileService userProfileService,EventService eventService,
-        MyWebSocketHandler myWebSocketHandler,AdminService adminService){
+        MyWebSocketHandler myWebSocketHandler,AdminService adminService,
+        OtpService otpService, UserInfoRepo userInfoRepo){
         this.userSignUpService=userSignUpService;
         this.userLoginService=userLoginService;
         this.userSearchService=userSearchService;
@@ -61,6 +68,8 @@ public class UserController {
         this.eventService=eventService;
         this.myWebSocketHandler=myWebSocketHandler;
         this.adminService=adminService;
+        this.otpService=otpService;
+        this.userInfoRepo=userInfoRepo;
     }
 
     @PostMapping("/create")
@@ -71,9 +80,51 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public Mono<ResponseEntity<String>> login(@RequestBody UserLoginDTO request){
+    public Mono<ResponseEntity<Object>> login(@RequestBody UserLoginDTO request){
         return userLoginService.logUser(request)
-        .map(message->ResponseEntity.ok(message));
+        .map(result -> {
+            if (result.startsWith("2FA_REQUIRED:")) {
+                String userId = result.substring("2FA_REQUIRED:".length());
+                return ResponseEntity.ok((Object) Map.of(
+                    "status", "2FA_REQUIRED",
+                    "userId", userId,
+                    "message", "2-Factor Authentication OTP sent to your registered email"
+                ));
+            } else if ("login succesfull".equals(result)) {
+                return ResponseEntity.ok((Object) Map.of(
+                    "status", "SUCCESS",
+                    "message", "login succesfull"
+                ));
+            } else {
+                return ResponseEntity.status(400).body((Object) Map.of(
+                    "status", "ERROR",
+                    "message", result
+                ));
+            }
+        });
+    }
+
+    @PostMapping("/login/2fa-verify")
+    public Mono<ResponseEntity<Map<String, String>>> verify2FALogin(@RequestBody Map<String, String> body) {
+        String identifier = body.get("identifier");
+        if (identifier == null) identifier = body.get("userId");
+        String otp = body.get("otp");
+
+        if (identifier == null || otp == null) {
+            return Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", "identifier and otp are required")));
+        }
+
+        return userLoginService.verify2FALogin(identifier, otp)
+                .map(valid -> valid 
+                    ? ResponseEntity.ok(Map.of("status", "SUCCESS", "message", "2FA verified, login successful"))
+                    : ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "Invalid or expired 2FA OTP")));
+    }
+
+    @PostMapping("/2fa/toggle")
+    public Mono<ResponseEntity<Map<String, Object>>> toggle2FA(@RequestHeader("User-Id") String userId, @RequestParam boolean enable) {
+        return userInfoRepo.update2FAStatus(userId, enable)
+                .map(user -> ResponseEntity.ok(Map.<String, Object>of("status", "success", "is2FAEnabled", user.getIs2FAEnabled())))
+                .switchIfEmpty(Mono.just(ResponseEntity.status(400).body(Map.<String, Object>of("status", "error", "message", "User not found"))));
     }
 
     @GetMapping("/me")
@@ -167,5 +218,68 @@ public class UserController {
     @GetMapping("/wake-up")
     public Mono<String> wakeup(){
         return Mono.just("alive");
+    }
+
+    @PostMapping("/send-signup-otp")
+    public Mono<ResponseEntity<Map<String, String>>> sendSignupOtp(@RequestParam String email) {
+        return otpService.sendRegistrationOtp(email)
+                .map(sent -> sent 
+                    ? ResponseEntity.ok(Map.of("status", "success", "message", "OTP sent to " + email))
+                    : ResponseEntity.status(400).body(Map.of("status", "error", "message", "Failed to send OTP")));
+    }
+
+    @PostMapping("/forgot-password/send-otp")
+    public Mono<ResponseEntity<Map<String, String>>> sendForgotPasswordOtp(@RequestParam String identifier) {
+        return userInfoRepo.findByIdentifier(identifier)
+                .flatMap(user -> {
+                    String targetEmail = user.getEmail() != null ? user.getEmail() : identifier;
+                    return otpService.sendForgotPasswordOtp(identifier, targetEmail)
+                            .map(sent -> sent
+                                ? ResponseEntity.ok(Map.of("status", "success", "message", "Reset OTP sent to registered email"))
+                                : ResponseEntity.status(500).body(Map.of("status", "error", "message", "Failed to send OTP email")));
+                })
+                .switchIfEmpty(Mono.just(ResponseEntity.status(404).body(Map.of("status", "error", "message", "User not found"))));
+    }
+
+    @PostMapping("/forgot-password/reset")
+    public Mono<ResponseEntity<Map<String, String>>> resetPassword(@RequestBody Map<String, String> request) {
+        String identifier = request.get("identifier");
+        String otp = request.get("otp");
+        String newPassword = request.get("newPassword");
+
+        if (identifier == null || otp == null || newPassword == null) {
+            return Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", "identifier, otp, and newPassword are required")));
+        }
+
+        boolean valid = otpService.verifyForgotPasswordOtp(identifier, otp);
+        if (!valid) {
+            return Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", "Invalid or expired OTP")));
+        }
+
+        return userInfoRepo.updatePassword(identifier, newPassword)
+                .map(user -> ResponseEntity.ok(Map.of("status", "success", "message", "Password reset successful")))
+                .switchIfEmpty(Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", "User not found"))));
+    }
+
+    @PostMapping("/signup/init")
+    public Mono<ResponseEntity<Map<String, String>>> initSignup(@RequestBody UserSignUpDTO request) {
+        return userSignUpService.initSignup(request)
+                .map(sent -> sent
+                    ? ResponseEntity.ok(Map.of("status", "success", "message", "OTP sent to " + request.getEmail()))
+                    : ResponseEntity.status(400).body(Map.of("status", "error", "message", "Failed to send OTP or invalid email")));
+    }
+
+    @PostMapping("/signup/verify")
+    public Mono<ResponseEntity<Object>> verifySignup(@RequestBody Map<String, String> body) {
+        String email = body.get("email");
+        String otp = body.get("otp");
+
+        if (email == null || otp == null) {
+            return Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", "email and otp are required")));
+        }
+
+        return userSignUpService.verifyAndCreateUser(email, otp)
+                .map(userResult -> ResponseEntity.status(201).body((Object) userResult))
+                .switchIfEmpty(Mono.just(ResponseEntity.status(400).body((Object) Map.of("status", "error", "message", "INVALID_OTP_OR_EXPIRED"))));
     }
 }

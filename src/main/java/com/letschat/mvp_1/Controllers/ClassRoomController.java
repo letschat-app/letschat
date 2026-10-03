@@ -25,6 +25,14 @@ import com.letschat.mvp_1.Service.SubmissionService;
 import reactor.core.publisher.Mono;
 
 
+import java.util.Map;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import com.letschat.mvp_1.DTOs.AssignmentStudentStatusDTO;
+import com.letschat.mvp_1.DTOs.ClassroomStudentStatsDTO;
+import com.letschat.mvp_1.Service.ClassRoomReportService;
+import org.springframework.web.bind.annotation.RequestParam;
+
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("api/classroom")
@@ -34,11 +42,18 @@ public class ClassRoomController {
     private final GroupAddService groupAddService;
     private final AssignmentService assignmentService;
     private final SubmissionService submissionService;
-    public ClassRoomController(ClassRoomService classRoomService,GroupAddService groupAddService,AssignmentService assignmentService,SubmissionService submissionService){
+    private final ClassRoomReportService classRoomReportService;
+
+    public ClassRoomController(ClassRoomService classRoomService,
+                               GroupAddService groupAddService,
+                               AssignmentService assignmentService,
+                               SubmissionService submissionService,
+                               ClassRoomReportService classRoomReportService){
         this.classRoomService=classRoomService;
         this.groupAddService=groupAddService;
         this.assignmentService=assignmentService;
         this.submissionService=submissionService;
+        this.classRoomReportService=classRoomReportService;
     }
 
     @PostMapping("/create/{name}")
@@ -77,7 +92,13 @@ public class ClassRoomController {
     }
 
     @PostMapping("assignment/submit/{id}")
-    public Mono<ResponseEntity<SubmissionInfo>> submit(@RequestBody SubmissionInfo info){
+    public Mono<ResponseEntity<SubmissionInfo>> submit(@PathVariable Long id, @RequestBody SubmissionInfo info){
+        if (info.getAssignmentId() == 0 || info.getAssignmentId() == 0L) {
+            info.setAssignmentId(id);
+        }
+        if (info.getTimestamp() == null) {
+            info.setTimestamp(java.time.Instant.now());
+        }
         return submissionService.insert(info)
         .map(body->ResponseEntity.ok(body));
     }
@@ -93,11 +114,66 @@ public class ClassRoomController {
     }
 
     @GetMapping("count")
-    public Mono<Integer> getcount(@RequestHeader String chatid,@RequestHeader LocalDateTime timestamp){
+    public Mono<Integer> getcount(
+            @RequestHeader String chatid,
+            @RequestHeader @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME) LocalDateTime timestamp){
         return classRoomService.getcount(chatid,timestamp);
     }
+
     @GetMapping("getlast")
-    public Mono<LoadMessageDTO> getlast(@RequestHeader String chatid,@RequestHeader LocalDateTime timestamp){
+    public Mono<LoadMessageDTO> getlast(
+            @RequestHeader String chatid,
+            @RequestHeader @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE_TIME) LocalDateTime timestamp){
         return classRoomService.getlast(chatid,timestamp);
+    }
+
+    @GetMapping("/assignment/{assignmentId}/students")
+    public Mono<List<AssignmentStudentStatusDTO>> getAssignmentStudentStatuses(@PathVariable Long assignmentId) {
+        return classRoomReportService.getAssignmentStudentStatuses(assignmentId);
+    }
+
+    @GetMapping("/{roomId}/student-stats")
+    public Mono<List<ClassroomStudentStatsDTO>> getClassroomStudentStats(@PathVariable String roomId) {
+        return classRoomReportService.getClassroomStudentStats(roomId);
+    }
+
+    @GetMapping("/{roomId}/export-report")
+    public Mono<ResponseEntity<byte[]>> exportReport(
+            @PathVariable String roomId,
+            @RequestParam(value = "format", defaultValue = "pdf") String format) {
+        return classRoomReportService.generateReport(roomId, format)
+                .map(bytes -> {
+                    String fmt = format.toLowerCase();
+                    MediaType mediaType = MediaType.APPLICATION_PDF;
+                    String ext = "pdf";
+
+                    if ("excel".equals(fmt) || "xlsx".equals(fmt)) {
+                        mediaType = MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                        ext = "xlsx";
+                    } else if ("csv".equals(fmt)) {
+                        mediaType = MediaType.parseMediaType("text/csv");
+                        ext = "csv";
+                    }
+
+                    return ResponseEntity.ok()
+                            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"Classroom_Report_" + roomId + "." + ext + "\"")
+                            .contentType(mediaType)
+                            .body(bytes);
+                });
+    }
+
+    @PostMapping("/{roomId}/email-report")
+    public Mono<ResponseEntity<Map<String, Object>>> emailReport(
+            @PathVariable String roomId,
+            @RequestParam String email,
+            @RequestParam(value = "format", defaultValue = "pdf") String format) {
+        return classRoomReportService.sendReportByEmail(roomId, format, email)
+                .map(sent -> {
+                    if (sent) {
+                        return ResponseEntity.ok(Map.of("status", "success", "message", "Report emailed to " + email));
+                    } else {
+                        return ResponseEntity.status(500).body(Map.of("status", "error", "message", "Failed to send email report. Ensure mail server settings are configured."));
+                    }
+                });
     }
 }

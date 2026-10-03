@@ -34,7 +34,7 @@ public class MessageTrackHistoryRepoCustomImpl
 
         StringBuilder sql = new StringBuilder("""
             INSERT INTO "MessageTrackHistory"
-            ("MessageId","SenderId","RecieverId","Status","DeliverTime")
+            ("MessageId","SenderId","RecieverId","Status","DeliverTime","ReadTime")
             VALUES
             """);
 
@@ -50,6 +50,7 @@ public class MessageTrackHistoryRepoCustomImpl
                 .append(", :receiverid").append(i)
                 .append(", :status").append(i)
                 .append(", :delivertime").append(i)
+                .append(", :readtime").append(i)
                 .append(")");
         }
 
@@ -64,22 +65,19 @@ public class MessageTrackHistoryRepoCustomImpl
                 .bind("receiverid" + i, receiverIds.get(i))
                 .bind("status" + i, statuses.get(i));
 
-            LocalDateTime deliveredTime =
-                deliveredTimes.get(i);
+            LocalDateTime deliveredTime = deliveredTimes.get(i);
+            String st = statuses.get(i);
 
             if (deliveredTime != null) {
-
-                query = query.bind(
-                    "delivertime" + i,
-                    deliveredTime
-                );
-
+                query = query.bind("delivertime" + i, deliveredTime);
             } else {
+                query = query.bindNull("delivertime" + i, LocalDateTime.class);
+            }
 
-                query = query.bindNull(
-                    "delivertime" + i,
-                    LocalDateTime.class
-                );
+            if ("read".equals(st)) {
+                query = query.bind("readtime" + i, deliveredTime != null ? deliveredTime : LocalDateTime.now());
+            } else {
+                query = query.bindNull("readtime" + i, LocalDateTime.class);
             }
         }
 

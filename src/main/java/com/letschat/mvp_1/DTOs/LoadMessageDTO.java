@@ -14,6 +14,12 @@ public class LoadMessageDTO {
     private String content;
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime timestamp;
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime delivertime;
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime readtime;
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime mediaopenedtime;
     private String repliedto;
     private String forwardedfrom;
     private String status;
@@ -145,6 +151,36 @@ public class LoadMessageDTO {
     }
     public void setspaceid(Integer spaceid){
         this.spaceid=spaceid;
+    }
+
+    public LocalDateTime getdelivertime(){
+        return delivertime;
+    }
+    public void setdelivertime(LocalDateTime delivertime){
+        this.delivertime=delivertime;
+    }
+
+    public LocalDateTime getreadtime(){
+        return readtime;
+    }
+    public void setreadtime(LocalDateTime readtime){
+        this.readtime=readtime;
+    }
+
+    public LocalDateTime getmediaopenedtime(){
+        return mediaopenedtime;
+    }
+    public void setmediaopenedtime(LocalDateTime mediaopenedtime){
+        this.mediaopenedtime=mediaopenedtime;
+    }
+
+    private PollUpdateDTO poll;
+
+    public PollUpdateDTO getpoll(){
+        return poll;
+    }
+    public void setpoll(PollUpdateDTO poll){
+        this.poll=poll;
     }
 }
 

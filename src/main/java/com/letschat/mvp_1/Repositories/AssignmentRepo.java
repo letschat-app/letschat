@@ -24,4 +24,11 @@ WHERE "si"."submission_id" IS NULL
 GROUP BY "uc"."UserId";
             """)
             Flux<MissingAssignmentDTO> findMissingAssignments();
+
+    @Query("""
+            SELECT * FROM "AssignmentInfo"
+            WHERE "chat_id" = :chatId
+            ORDER BY "created" ASC
+            """)
+    Flux<AssignmentInfo> findByChatId(String chatId);
 }

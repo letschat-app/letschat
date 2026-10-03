@@ -14,8 +14,11 @@ public class AssignmentService {
         this.assignmentRepo=assignmentRepo;
     }
     public Mono<Long> post(AssignmentInfo assignment){
+        if (assignment.getCreated() == null) {
+            assignment.setCreated(java.time.Instant.now());
+        }
         return assignmentRepo.save(assignment)
-        .flatMap(assign->Mono.just(assign.getAssignmentId()));
+        .map(AssignmentInfo::getAssignmentId);
     }
 
     public Mono<AssignmentInfo> get(Long id){

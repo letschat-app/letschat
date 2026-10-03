@@ -2,6 +2,7 @@ package com.letschat.mvp_1.WebSocket;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,10 @@ import com.letschat.mvp_1.Repositories.MessageTrackHistoryRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
 import com.letschat.mvp_1.Service.AdminService;
+import com.letschat.mvp_1.Service.PollService;
+import org.springframework.transaction.reactive.TransactionalOperator;
+import com.letschat.mvp_1.DTOs.PollUpdateDTO;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -46,7 +51,10 @@ public class MyWebSocketHandler implements WebSocketHandler{
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
     private final AdminService adminService;
-    public MyWebSocketHandler(UserChatInfoRepo userChatInfoRepo,UserInfoRepo userInfoRepo,ObjectMapper objectMapper,MessageInfoRepo messageInfoRepo,MessageTrackHistoryRepo messageTrackHistoryRepo,NotificationService notificationService,AdminService adminService){
+    private final PollService pollService;
+    private final TransactionalOperator transactionalOperator;
+
+    public MyWebSocketHandler(UserChatInfoRepo userChatInfoRepo,UserInfoRepo userInfoRepo,ObjectMapper objectMapper,MessageInfoRepo messageInfoRepo,MessageTrackHistoryRepo messageTrackHistoryRepo,NotificationService notificationService,AdminService adminService,PollService pollService,TransactionalOperator transactionalOperator){
         this.userChatInfoRepo=userChatInfoRepo;
         this.userInfoRepo=userInfoRepo;
         this.objectMapper=objectMapper;
@@ -56,6 +64,8 @@ public class MyWebSocketHandler implements WebSocketHandler{
         this.messageInfoRepo=messageInfoRepo;
         this.notificationService=notificationService;
         this.adminService=adminService;
+        this.pollService=pollService;
+        this.transactionalOperator=transactionalOperator;
     }
     private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> userstatus=new ConcurrentHashMap<>();
     private final Map<String,String>userid=new ConcurrentHashMap<>();
@@ -263,10 +273,19 @@ public void removeUserFromChatCache(String chatId, String userId) {
 
 public Mono<Void> onrecieve(String sessionId, String json) {
 
-    return Mono.fromCallable(() ->
-            objectMapper.readValue(json, ReceivingMessageDTO.class)
-        )
-        .flatMap(data -> {
+    return Mono.fromCallable(() -> objectMapper.readTree(json))
+        .flatMap(node -> {
+            if (node.has("purpose")) {
+                return loadmsg(sessionId, json);
+            }
+
+            ReceivingMessageDTO data;
+            try {
+                data = objectMapper.treeToValue(node, ReceivingMessageDTO.class);
+            } catch (JsonProcessingException e) {
+                System.out.println("load msg calling");
+                return loadmsg(sessionId, json);
+            }
 
             if (data.getchatid() == null) {
                 return Mono.error(new RuntimeException("ChatId is null"));
@@ -310,6 +329,86 @@ public Mono<Void> onrecieve(String sessionId, String json) {
             }
 
             // NORMAL FLOW
+            if ("poll".equals(data.gettype())) {
+                Long pollId;
+                try {
+                    JsonNode pollNode = objectMapper.readTree(data.getcontent());
+                    pollId = (pollNode.has("poll_id") && !pollNode.get("poll_id").isNull()) ? pollNode.get("poll_id").asLong() : null;
+                    if (pollId == null) {
+                        return sendAckAsync(senderSink, chatId, data.gettempmsgid(), null, "error");
+                    }
+                } catch (Exception e) {
+                    return sendAckAsync(senderSink, chatId, data.gettempmsgid(), null, "error");
+                }
+
+                return getType(chatId)
+                    .flatMap(type ->
+                        getusername(chatId, userId)
+                            .flatMap(username -> {
+                                Mono<Void> insertAndLink = messageInfoRepo.insert(
+                                    msgId,
+                                    chatId,
+                                    userId,
+                                    data.gettype(),
+                                    data.getcontent(),
+                                    data.getrepliedto(),
+                                    data.getforwardedfrom(),
+                                    data.gettimestamp(),
+                                    data.getspaceid()
+                                )
+                                .then(pollService.linkPollToMessage(pollId, msgId, userId, chatId));
+
+                                return insertAndLink
+                                    .as(transactionalOperator::transactional)
+                                    .then(pollService.buildPollUpdateDTO(pollId, msgId, userId))
+                                    .flatMap(pollDTO -> {
+                                        SendingMessageDTO msg = buildMsg(msgId, chatId, data, username, userId);
+                                        msg.setpoll(pollDTO);
+
+                                        return getUserIds(chatId, userId)
+                                            .<MessageResult>flatMap(receiverId ->
+                                                sendMessageWithPoll(receiverId, chatId, userId, username, type, msg)
+                                            )
+                                            .collectList()
+                                            .flatMap(results -> {
+                                                String finalStatus = "read";
+                                                for (MessageResult result : results) {
+                                                    if ("pending".equals(result.status())) {
+                                                        finalStatus = "pending";
+                                                        break;
+                                                    }
+                                                    if ("delivered".equals(result.status())) {
+                                                        finalStatus = "delivered";
+                                                    }
+                                                }
+
+                                                List<String> receiverIds = results.stream().map(MessageResult::receiverId).toList();
+                                                List<String> statuses = results.stream().map(MessageResult::status).toList();
+                                                List<LocalDateTime> deliveredTimes = results.stream().map(MessageResult::deliveredTime).toList();
+
+                                                List<String> pendingUsers = results.stream().filter(r -> "pending".equals(r.status())).map(MessageResult::receiverId).toList();
+                                                List<String> deliveredUsers = results.stream().filter(r -> "delivered".equals(r.status())).map(MessageResult::receiverId).toList();
+                                                List<String> readUsers = results.stream().filter(r -> "read".equals(r.status())).map(MessageResult::receiverId).toList();
+
+                                                return sendAckAsync(
+                                                    senderSink,
+                                                    chatId,
+                                                    data.gettempmsgid(),
+                                                    msgId,
+                                                    finalStatus,
+                                                    pendingUsers,
+                                                    deliveredUsers,
+                                                    readUsers,
+                                                    LocalDateTime.now()
+                                                )
+                                                .then(messageTrackHistoryRepo.batchInsert(msgId, userId, receiverIds, statuses, deliveredTimes));
+                                            });
+                                    });
+                            })
+                    )
+                    .then()
+                    .onErrorResume(e -> sendAckAsync(senderSink, chatId, data.gettempmsgid(), null, "error"));
+            }
             return getType(chatId)
                 .flatMap(type ->
                     getusername(chatId, userId)
@@ -345,46 +444,67 @@ public Mono<Void> onrecieve(String sessionId, String json) {
 
                                     // SEND ACK AFTER MESSAGE
                                     List<String> receiverIds = results.stream()
-    .map(MessageResult::receiverId)
-    .toList();
+                                        .map(MessageResult::receiverId)
+                                        .toList();
 
-List<String> statuses = results.stream()
-    .map(MessageResult::status)
-    .toList();
+                                    List<String> statuses = results.stream()
+                                        .map(MessageResult::status)
+                                        .toList();
 
-List<LocalDateTime> deliveredTimes = results.stream()
-    .map(MessageResult::deliveredTime)
-    .toList();
+                                    List<LocalDateTime> deliveredTimes = results.stream()
+                                        .map(MessageResult::deliveredTime)
+                                        .toList();
 
-return sendAckAsync(
-    senderSink,
-    chatId,
-    data.gettempmsgid(),
-    msgId,
-    finalStatus
-)
-.then(
-    messageInfoRepo.insert(
-        msgId,
-        chatId,
-        userId,
-        data.gettype(),
-        data.getcontent(),
-        data.getrepliedto(),
-        data.getforwardedfrom(),
-        data.gettimestamp(),
-        data.getspaceid()
-    )
-)
-.then(
-    messageTrackHistoryRepo.batchInsert(
-        msgId,
-        userId,
-        receiverIds,
-        statuses,
-        deliveredTimes
-    )
-);
+                                    List<String> pendingUsers = results.stream()
+                                        .filter(r -> "pending".equals(r.status()))
+                                        .map(MessageResult::receiverId)
+                                        .toList();
+
+                                    List<String> deliveredUsers = results.stream()
+                                        .filter(r -> "delivered".equals(r.status()))
+                                        .map(MessageResult::receiverId)
+                                        .toList();
+
+                                    List<String> readUsers = results.stream()
+                                        .filter(r -> "read".equals(r.status()))
+                                        .map(MessageResult::receiverId)
+                                        .toList();
+
+                                    LocalDateTime now = LocalDateTime.now();
+
+                                    return sendAckAsync(
+                                        senderSink,
+                                        chatId,
+                                        data.gettempmsgid(),
+                                        msgId,
+                                        finalStatus,
+                                        pendingUsers,
+                                        deliveredUsers,
+                                        readUsers,
+                                        now
+                                    )
+                                    .then(
+                                        messageInfoRepo.insert(
+                                            msgId,
+                                            chatId,
+                                            userId,
+                                            data.gettype(),
+                                            data.getcontent(),
+                                            data.getrepliedto(),
+                                            data.getforwardedfrom(),
+                                            data.gettimestamp(),
+                                            data.getspaceid()
+                                        )
+                                    )
+                                    .then(
+                                        messageTrackHistoryRepo.batchInsert(
+                                            msgId,
+                                            userId,
+                                            receiverIds,
+                                            statuses,
+                                            deliveredTimes
+                                        )
+                                    );
                                 })
                         )
                 )
@@ -515,6 +635,34 @@ private Mono<MessageResult> sendMessage(
     );
 }
 
+private Mono<MessageResult> sendMessageWithPoll(
+        String receiverId,
+        String chatId,
+        String userId,
+        String username,
+        String type,
+        SendingMessageDTO msg
+) {
+    Sinks.Many<String> receiverSink = usersink.get(receiverId);
+
+    ReceivingMessageDTO tempDTO = new ReceivingMessageDTO();
+    tempDTO.setcontent(msg.getcontent());
+    tempDTO.settype(msg.gettype());
+    tempDTO.setspaceid(msg.getspaceid());
+    fireNotification(receiverId, chatId, username, tempDTO, type);
+
+    if (receiverSink != null) {
+        userstatus.computeIfAbsent(receiverId, k -> new ConcurrentHashMap<>()).putIfAbsent(chatId, "in-active");
+        boolean isActive = "active".equals(userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId));
+        String status = isActive ? "read" : "delivered";
+        LocalDateTime deliveredTime = LocalDateTime.now();
+
+        return sendToSinkAsync(receiverSink, msg).thenReturn(new MessageResult(receiverId, status, deliveredTime));
+    }
+
+    return Mono.just(new MessageResult(receiverId, "pending", null));
+}
+
 
 private record MessageResult(
     String receiverId,
@@ -558,6 +706,22 @@ private Mono<Void> sendAckAsync(Sinks.Many<String> senderSink, String chatId,
     return sendToSinkAsync(senderSink, ack);
 }
 
+private Mono<Void> sendAckAsync(Sinks.Many<String> senderSink, String chatId,
+                                 String tempMsgId, String msgId, String status,
+                                 List<String> pendingUsers, List<String> deliveredUsers, List<String> readUsers,
+                                 LocalDateTime timestamp) {
+    ACKMessageDTO ack = new ACKMessageDTO();
+    ack.setchatid(chatId);
+    ack.settempmsgid(tempMsgId);
+    ack.setmsgid(msgId);
+    ack.setstatus(status);
+    if (pendingUsers != null && !pendingUsers.isEmpty()) ack.setpending_users(pendingUsers);
+    if (deliveredUsers != null && !deliveredUsers.isEmpty()) ack.setdelivered_users(deliveredUsers);
+    if (readUsers != null && !readUsers.isEmpty()) ack.setread_users(readUsers);
+    ack.settimestamp(timestamp);
+    return sendToSinkAsync(senderSink, ack);
+}
+
 private void fireNotification(String receiverId, String chatId,
                                String username, ReceivingMessageDTO data, String type) {
     String payload = data.getspaceid() + "/%20/" + data.gettype()
@@ -572,300 +736,387 @@ private void fireNotification(String receiverId, String chatId,
 }
 
     @SuppressWarnings("ConvertToStringSwitch")
-    public Mono<Void> loadmsg(String sessionid,String json){
+    public Mono<Void> loadmsg(String sessionid, String json) {
         System.out.println("load msg called");
-        String Userid=userid.get(sessionid);
+        String Userid = userid.get(sessionid);
         if (Userid == null) {
             System.out.println("loadmsg: session not found " + sessionid);
-            return Mono.empty(); // ← guard
+            return Mono.empty();
         }
-        Sinks.Many<String> sender_sink=usersink.get(Userid);
-       // String Chatid;
+        Sinks.Many<String> sender_sink = usersink.get(Userid);
         if (sender_sink == null) {
             System.out.println("loadmsg: sink not found for " + Userid);
-            return Mono.empty(); // ← guard
-        }
-        return Mono.fromCallable(()->objectMapper.readValue(json,ChatUpdateDTO.class))
-            .flatMap(data->{
-                return getType(data.getuserchatid())
-                //return userChatInfoRepo.findTypeByChatId(data.getuserchatid())
-                .flatMap(type->{
-              //  Integer space=Integer.parseInt(data.getmsgid());
-                System.out.println(data.getpurpose());
-                System.out.println(data.getuserchatid());
-if("classroom".equals(type) || "room".equals(type)){
-    if(data.getpurpose().equals("load")){
-        Integer space=Integer.parseInt(data.getmsgid());
-        return messageInfoRepo.loadforroom(data.getuserchatid(), space, LocalDateTime.now())
-            .collectList()
-            .flatMap(msgs -> {
-                Map<String, Object> batch = new HashMap<>();
-                batch.put("type", "batch");
-                batch.put("chatid", data.getuserchatid());
-                batch.put("hasmore", msgs.size() == 60);
-                batch.put("msgs", msgs);
-                notificationService.clear(Userid, data.getuserchatid());
-                return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
-                    .doOnNext(sender_sink::tryEmitNext)
-                    .onErrorResume(e -> {
-                        System.out.println(e);
-                        return Mono.empty();
-                    });
-            }).then();
-    }
-    if(data.getpurpose().equals("load-more")){
-        Integer space=Integer.parseInt(data.getmsgid());
-        return messageInfoRepo.loadforroom(data.getuserchatid(), space, data.gettime())
-            .collectList()
-            .flatMap(msgs -> {
-                Map<String, Object> batch = new HashMap<>();
-                batch.put("type", "batch");
-                batch.put("chatid", data.getuserchatid());
-                batch.put("hasmore", msgs.size() == 60);
-                batch.put("msgs", msgs);
-                notificationService.clear(Userid, data.getuserchatid());
-                return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
-                    .doOnNext(sender_sink::tryEmitNext)
-                    .onErrorResume(e -> {
-                        System.out.println(e);
-                        return Mono.empty();
-                    });
-            }).then();
-    }
-}
-                System.out.print(json);
-if(data.getpurpose().equals("load")){
-    userstatus.compute(Userid, (key,chatmap)->{
-        if(chatmap==null){
-            chatmap=new ConcurrentHashMap<>();
-        }
-        chatmap.put(data.getuserchatid(),"active");
-        return chatmap;
-    });
-    Integer space=Integer.parseInt(data.getmsgid());
-    System.out.println("load msg "+space);
-    return messageInfoRepo.load(Userid, data.getuserchatid(), space, LocalDateTime.now())
-        .collectList()
-        .doOnNext(msgs->System.out.println("onnext "+msgs.size()))
-        .flatMap(msgs -> {
-            System.out.println("batch size:"+msgs.size());
-            Map<String, Object> batch = new HashMap<>();
-            batch.put("type", "batch");
-            batch.put("chatid", data.getuserchatid());
-            batch.put("hasmore", msgs.size() == 60);
-            batch.put("msgs", msgs);
-            notificationService.clear(Userid, data.getuserchatid());
-            return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
-                .doOnNext(sender_sink::tryEmitNext)
-                .onErrorResume(e -> {
-                    System.out.println(e);
-                    return Mono.empty();
-                });
-        }).then();
-}
-else if(data.getpurpose().equals("load-more")){
-    Integer space=Integer.parseInt(data.getmsgid());
-    System.out.println("load msg more"+space);
-    return messageInfoRepo.load(Userid, data.getuserchatid(), space, data.gettime())
-        .collectList()
-        .flatMap(msgs -> {
-            System.out.println("batch size:"+msgs.size());
-            Map<String, Object> batch = new HashMap<>();
-            batch.put("type", "batch");
-            batch.put("chatid", data.getuserchatid());
-            batch.put("hasmore", msgs.size() == 60);
-            batch.put("msgs", msgs);
-            notificationService.clear(Userid, data.getuserchatid());
-            return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
-                .doOnNext(sender_sink::tryEmitNext)
-                .onErrorResume(e -> {
-                    System.out.println(e);
-                    return Mono.empty();
-                });
-        }).then();
-}
-                else if(data.getpurpose().equals("check-in")){
-                    LocalDateTime now=LocalDateTime.now();
-                    String chatid=data.getuserchatid();
-                    System.out.println("check in "+chatid);
-                    userstatus.compute(Userid, (key,chatmap)->{
-                        if(chatmap==null){
-                            chatmap=new ConcurrentHashMap<>();
-                        }
-                        chatmap.put(chatid,"active");
-                        return chatmap;
-                    });
-                    Integer space=Integer.parseInt(data.getmsgid());
-                    return messageTrackHistoryRepo.updateoncheckin(Userid,chatid,now,space)
-                    .flatMap(msg->{
-                        if(usersink.containsKey(msg.getSenderId())){
-                            ACKMessageDTO ack=new ACKMessageDTO();
-                            ack.setchatid(chatid);
-                            ack.setmsgid(msg.getMessageId());
-                            ack.setstatus("read");
-                            Sinks.Many<String> ack_sink=usersink.get(msg.getSenderId());
-                            return Mono.fromCallable(()->objectMapper.writeValueAsString(ack))
-                            .flatMap(ackjson->{
-                                //ack_sink.tryEmitNext(ackjson);
-                                try {
-                                    ack_sink.emitNext(objectMapper.writeValueAsString(ackjson),
-                                    (signalType, emitResult) -> emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED);
-                                    notificationService.clear(Userid, data.getuserchatid());
-                                } catch (JsonProcessingException e) {  
-
-                                }
-                                return Mono.empty();
-                            })
-                            .onErrorResume(e->{
-                            System.out.println(e);
-                            return Mono.empty();
-                            });
-                        }
-                        return Mono.empty();
-                    }).then();
-                }
-                else if(data.getpurpose().equals("check-out")){                    
-                    String chatid=data.getuserchatid();
-                    System.out.println("check out "+chatid);
-                    userstatus.compute(Userid, (key,chatmap)->{
-                        if(chatmap==null){
-                            chatmap=new ConcurrentHashMap<>();
-                        }
-                        chatmap.put(chatid,"in-active");
-                        return chatmap;
-                    });
-                    return Mono.empty();
-                }
-                else if(data.getpurpose().equals("delete-for-me")){
-                    String chatid=data.getuserchatid();
-                    String msgid=data.getmsgid();
-                    System.out.println("delete "+msgid+" from "+chatid+"me");
-                    return messageTrackHistoryRepo.deletemessage(Userid, msgid).then();
-                    
-                }
-                else if(data.getpurpose().equals("delete-for-eone")){
-                    String chatid=data.getuserchatid();
-                    String msgid=data.getmsgid();
-                    System.out.println("delete "+msgid+" from "+chatid+" eone");
-                    return messageInfoRepo.deleteforeone(Userid, msgid)
-                    .flatMap(u->{
-                        return messageTrackHistoryRepo.getmsgid(msgid)
-                    
-                    .flatMap(msg->{
-                        System.out.println(msg.getRecieverId());
-                        if(usersink.containsKey(msg.getRecieverId())){
-                            ACKMessageDTO ack=new ACKMessageDTO();
-                            ack.setchatid(chatid);
-                            ack.setmsgid(msgid);
-                            ack.setstatus("deleted"+Userid);
-                            Sinks.Many<String> ack_sink=usersink.get(msg.getRecieverId());
-                            return Mono.fromCallable(()->objectMapper.writeValueAsString(ack))
-                            .flatMap(ackjson->{
-                                ack_sink.tryEmitNext(ackjson);
-                                return Mono.empty();
-                            })
-                            .onErrorResume(e->{
-                            System.out.println(e);
-                            return Mono.empty();
-                            });
-                        }
-                        return Mono.empty();
-                    })
-                    .switchIfEmpty(
-        // THIS RUNS IF 'msg' WAS NOT FOUND (i.e., the Mono was empty)
-        Mono.fromRunnable(() -> System.out.println("Inner Message history not found for msgid: " + msgid))
-    ).then();
-                    }).switchIfEmpty(
-        // THIS RUNS IF 'msg' WAS NOT FOUND (i.e., the Mono was empty)
-        Mono.fromRunnable(() -> System.out.println("Outer Message history not found for msgid: " + msgid))
-    ).then();
-                }
-                else if(data.getpurpose().equals("revive-for-me")){
-                    String chatid=data.getuserchatid();
-                    String msgid=data.getmsgid();
-                    System.out.println("revive "+msgid+" from "+chatid+"me");
-                    return messageTrackHistoryRepo.reviveforme(Userid, msgid).then();
-                }
-                else if(data.getpurpose().equals("revive-for-eone")){
-                    String chatid=data.getuserchatid();
-                    String msgid=data.getmsgid();
-                    System.out.println("revive "+msgid+" from "+chatid+" eone");
-                    return messageInfoRepo.reviveforeone(Userid, msgid)
-                    .flatMapMany(u->messageTrackHistoryRepo.getmsgid(msgid))
-                    .flatMap(msg->{
-                        System.out.println(msg.getRecieverId());
-                        if(usersink.containsKey(msg.getRecieverId())){
-                            ACKMessageDTO ack=new ACKMessageDTO();
-                            ack.setchatid(chatid);
-                            ack.setmsgid(msgid);
-                            ack.setstatus("revived");
-                            Sinks.Many<String> ack_sink=usersink.get(msg.getRecieverId());
-                            return Mono.fromCallable(()->objectMapper.writeValueAsString(ack))
-                            .flatMap(ackjson->{
-                                ack_sink.tryEmitNext(ackjson);
-                                return Mono.empty();
-                            })
-                            .onErrorResume(e->{
-                            System.out.println(e);
-                            return Mono.empty();
-                            });
-                        }
-                        return Mono.empty();
-                    }).then();
-                }
-                else{
-                    return Mono.empty();
-                }
-            });}
-        ).onErrorResume(e->{
-            System.out.println(e);
             return Mono.empty();
-        });
+        }
+        return Mono.fromCallable(() -> objectMapper.readValue(json, ChatUpdateDTO.class))
+            .flatMap(data -> {
+                String purpose = data.getpurpose();
+                if (purpose == null) return Mono.empty();
+
+                return getType(data.getuserchatid())
+                    .flatMap(type -> {
+                        boolean isRoomOrClassroom = "classroom".equals(type) || "room".equals(type);
+                        String chatId = data.getuserchatid();
+
+                        switch (purpose) {
+                            case "load": {
+                                if (!isRoomOrClassroom) {
+                                    userstatus.compute(Userid, (key, chatmap) -> {
+                                        if (chatmap == null) chatmap = new ConcurrentHashMap<>();
+                                        chatmap.put(chatId, "active");
+                                        return chatmap;
+                                    });
+                                }
+                                Integer space = Integer.parseInt(data.getmsgid());
+                                Flux<com.letschat.mvp_1.DTOs.LoadMessageDTO> msgsFlux = isRoomOrClassroom ?
+                                        messageInfoRepo.loadforroom(Userid, chatId, space, LocalDateTime.now()) :
+                                        messageInfoRepo.load(Userid, chatId, space, LocalDateTime.now());
+
+                                return msgsFlux.collectList()
+                                    .flatMap(msgs -> pollService.enrichPollMessages(msgs, Userid))
+                                    .flatMap(msgs -> {
+                                        Map<String, Object> batch = new HashMap<>();
+                                        batch.put("type", "batch");
+                                        batch.put("chatid", chatId);
+                                        batch.put("hasmore", msgs.size() == 60);
+                                        batch.put("msgs", msgs);
+                                        notificationService.clear(Userid, chatId);
+                                        return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                                            .doOnNext(sender_sink::tryEmitNext)
+                                            .onErrorResume(e -> {
+                                                System.out.println(e);
+                                                return Mono.empty();
+                                            });
+                                    }).then();
+                            }
+                            case "load-more": {
+                                Integer space = Integer.parseInt(data.getmsgid());
+                                Flux<com.letschat.mvp_1.DTOs.LoadMessageDTO> msgsFlux = isRoomOrClassroom ?
+                                        messageInfoRepo.loadforroom(Userid, chatId, space, data.gettime()) :
+                                        messageInfoRepo.load(Userid, chatId, space, data.gettime());
+
+                                return msgsFlux.collectList()
+                                    .flatMap(msgs -> pollService.enrichPollMessages(msgs, Userid))
+                                    .flatMap(msgs -> {
+                                        Map<String, Object> batch = new HashMap<>();
+                                        batch.put("type", "batch");
+                                        batch.put("chatid", chatId);
+                                        batch.put("hasmore", msgs.size() == 60);
+                                        batch.put("msgs", msgs);
+                                        notificationService.clear(Userid, chatId);
+                                        return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                                            .doOnNext(sender_sink::tryEmitNext)
+                                            .onErrorResume(e -> {
+                                                System.out.println(e);
+                                                return Mono.empty();
+                                            });
+                                    }).then();
+                            }
+                            case "vote-poll": {
+                                String msgId = data.getmsgid();
+                                List<Long> optionIds = new ArrayList<>();
+                                Long pollId = null;
+
+                                try {
+                                    JsonNode node = objectMapper.readTree(json);
+                                    if (node.has("option_ids") && node.get("option_ids").isArray()) {
+                                        for (JsonNode item : node.get("option_ids")) {
+                                            optionIds.add(item.asLong());
+                                        }
+                                    }
+                                    if (node.has("poll_id")) {
+                                        pollId = node.get("poll_id").asLong();
+                                    }
+                                } catch (Exception e) {}
+
+                                return pollService.votePoll(Userid, chatId, msgId, optionIds, pollId)
+                                    .flatMap(pollDTO -> {
+                                        Mono<Void> sendToVoter = sendToSinkAsync(sender_sink, pollDTO);
+
+                                        PollUpdateDTO publicDTO = new PollUpdateDTO();
+                                        publicDTO.setType("poll-update");
+                                        publicDTO.setChatid(pollDTO.getChatid());
+                                        publicDTO.setMsgid(pollDTO.getMsgid());
+                                        publicDTO.setPoll_id(pollDTO.getPoll_id());
+                                        publicDTO.setQuestion(pollDTO.getQuestion());
+                                        publicDTO.setAllow_multiple(pollDTO.getAllow_multiple());
+                                        publicDTO.setAllow_user_options(pollDTO.getAllow_user_options());
+                                        publicDTO.setAnonymous(pollDTO.getAnonymous());
+                                        publicDTO.setIs_expired(pollDTO.getIs_expired());
+                                        publicDTO.setExpires_at(pollDTO.getExpires_at());
+                                        publicDTO.setTotal_voters(pollDTO.getTotal_voters());
+                                        publicDTO.setTotal_members(pollDTO.getTotal_members());
+                                        publicDTO.setOptions(pollDTO.getOptions());
+
+                                        Mono<Void> broadcastToOthers = getUserIds(chatId, Userid)
+                                            .flatMap(receiverId -> {
+                                                Sinks.Many<String> receiverSink = usersink.get(receiverId);
+                                                return sendToSinkAsync(receiverSink, publicDTO);
+                                            })
+                                            .then();
+
+                                        return sendToVoter.then(broadcastToOthers);
+                                    })
+                                    .onErrorResume(e -> {
+                                        System.out.println("vote-poll error: " + e.getMessage());
+                                        Map<String, String> errMap = Map.of("error", e.getMessage(), "purpose", "vote-poll");
+                                        return sendToSinkAsync(sender_sink, errMap);
+                                    });
+                            }
+                            case "add-poll-option": {
+                                String msgId = data.getmsgid();
+                                String optionText = "";
+                                Long pollId = null;
+
+                                try {
+                                    JsonNode node = objectMapper.readTree(json);
+                                    if (node.has("option_text")) {
+                                        optionText = node.get("option_text").asText();
+                                    }
+                                    if (node.has("poll_id")) {
+                                        pollId = node.get("poll_id").asLong();
+                                    }
+                                } catch (Exception e) {}
+
+                                return pollService.addPollOption(Userid, chatId, msgId, optionText, pollId)
+                                    .flatMap(pollDTO -> {
+                                        PollUpdateDTO publicDTO = new PollUpdateDTO();
+                                        publicDTO.setType("poll-update");
+                                        publicDTO.setChatid(pollDTO.getChatid());
+                                        publicDTO.setMsgid(pollDTO.getMsgid());
+                                        publicDTO.setPoll_id(pollDTO.getPoll_id());
+                                        publicDTO.setQuestion(pollDTO.getQuestion());
+                                        publicDTO.setAllow_multiple(pollDTO.getAllow_multiple());
+                                        publicDTO.setAllow_user_options(pollDTO.getAllow_user_options());
+                                        publicDTO.setAnonymous(pollDTO.getAnonymous());
+                                        publicDTO.setIs_expired(pollDTO.getIs_expired());
+                                        publicDTO.setExpires_at(pollDTO.getExpires_at());
+                                        publicDTO.setTotal_voters(pollDTO.getTotal_voters());
+                                        publicDTO.setTotal_members(pollDTO.getTotal_members());
+                                        publicDTO.setOptions(pollDTO.getOptions());
+
+                                        return getUserIds(chatId, Userid)
+                                            .flatMap(receiverId -> {
+                                                Sinks.Many<String> receiverSink = usersink.get(receiverId);
+                                                return sendToSinkAsync(receiverSink, publicDTO);
+                                            })
+                                            .then(sendToSinkAsync(sender_sink, publicDTO));
+                                    })
+                                    .onErrorResume(e -> {
+                                        System.out.println("add-poll-option error: " + e.getMessage());
+                                        Map<String, String> errMap = Map.of("error", e.getMessage(), "purpose", "add-poll-option");
+                                        return sendToSinkAsync(sender_sink, errMap);
+                                    });
+                            }
+                            case "check-in": {
+                                LocalDateTime now = LocalDateTime.now();
+                                System.out.println("check in " + chatId);
+                                userstatus.compute(Userid, (key, chatmap) -> {
+                                    if (chatmap == null) chatmap = new ConcurrentHashMap<>();
+                                    chatmap.put(chatId, "active");
+                                    return chatmap;
+                                });
+                                int space = 0;
+                                if (data.getmsgid() != null && !data.getmsgid().trim().isEmpty()) {
+                                    try {
+                                        space = Integer.parseInt(data.getmsgid().trim());
+                                    } catch (Exception e) {
+                                        space = 0;
+                                    }
+                                }
+                                notificationService.clear(Userid, chatId);
+
+                                return messageTrackHistoryRepo.updateoncheckin(Userid, chatId, now, space)
+                                    .collectList()
+                                    .flatMap(updatedMsgs -> {
+                                        if (updatedMsgs.isEmpty()) return Mono.empty();
+
+                                        Map<String, List<String>> senderMsgMap = updatedMsgs.stream()
+                                            .collect(Collectors.groupingBy(
+                                                com.letschat.mvp_1.Models.MessageTrackHistory::getSenderId,
+                                                Collectors.mapping(com.letschat.mvp_1.Models.MessageTrackHistory::getMessageId, Collectors.toList())
+                                            ));
+
+                                        return Flux.fromIterable(senderMsgMap.entrySet())
+                                            .flatMap(entry -> {
+                                                String senderId = entry.getKey();
+                                                List<String> msgIds = entry.getValue();
+
+                                                if (usersink.containsKey(senderId)) {
+                                                    ACKMessageDTO ack = new ACKMessageDTO(chatId, msgIds, "read", now);
+                                                    Sinks.Many<String> ackSink = usersink.get(senderId);
+                                                    return sendToSinkAsync(ackSink, ack);
+                                                }
+                                                return Mono.empty();
+                                            })
+                                            .then();
+                                    });
+                            }
+                            case "check-out": {
+                                System.out.println("check out " + chatId);
+                                userstatus.compute(Userid, (key, chatmap) -> {
+                                    if (chatmap == null) chatmap = new ConcurrentHashMap<>();
+                                    chatmap.put(chatId, "in-active");
+                                    return chatmap;
+                                });
+                                return Mono.empty();
+                            }
+                            case "media-opened": {
+                                LocalDateTime now = LocalDateTime.now();
+                                String msgid = data.getmsgid();
+                                System.out.println("media-opened " + msgid + " in " + chatId + " by " + Userid);
+                                return messageTrackHistoryRepo.updateonmediaopened(Userid, msgid, now)
+                                    .collectList()
+                                    .flatMap(openedMsgs -> {
+                                        if (openedMsgs.isEmpty()) return Mono.empty();
+
+                                        Map<String, List<String>> senderMsgMap = openedMsgs.stream()
+                                            .collect(Collectors.groupingBy(
+                                                com.letschat.mvp_1.Models.MessageTrackHistory::getSenderId,
+                                                Collectors.mapping(com.letschat.mvp_1.Models.MessageTrackHistory::getMessageId, Collectors.toList())
+                                            ));
+
+                                        return Flux.fromIterable(senderMsgMap.entrySet())
+                                            .flatMap(entry -> {
+                                                String senderId = entry.getKey();
+                                                List<String> msgIds = entry.getValue();
+
+                                                if (usersink.containsKey(senderId)) {
+                                                    ACKMessageDTO ack = new ACKMessageDTO(chatId, msgIds, "media-opened", now);
+                                                    Sinks.Many<String> ackSink = usersink.get(senderId);
+                                                    return sendToSinkAsync(ackSink, ack);
+                                                }
+                                                return Mono.empty();
+                                            })
+                                            .then();
+                                    });
+                            }
+                            case "delete-for-me": {
+                                String msgid = data.getmsgid();
+                                System.out.println("delete " + msgid + " from " + chatId + "me");
+                                return messageTrackHistoryRepo.deletemessage(Userid, msgid).then();
+                            }
+                            case "delete-for-eone": {
+                                String msgid = data.getmsgid();
+                                System.out.println("delete " + msgid + " from " + chatId + " eone");
+                                return messageInfoRepo.deleteforeone(Userid, msgid)
+                                    .flatMapMany(u -> messageTrackHistoryRepo.getmsgid(msgid)
+                                        .flatMap(msg -> {
+                                            System.out.println(msg.getRecieverId());
+                                            if (usersink.containsKey(msg.getRecieverId())) {
+                                                ACKMessageDTO ack = new ACKMessageDTO();
+                                                ack.setchatid(chatId);
+                                                ack.setmsgid(msgid);
+                                                ack.setstatus("deleted" + Userid);
+                                                Sinks.Many<String> ack_sink = usersink.get(msg.getRecieverId());
+                                                return Mono.fromCallable(() -> objectMapper.writeValueAsString(ack))
+                                                    .flatMap(ackjson -> {
+                                                        ack_sink.tryEmitNext(ackjson);
+                                                        return Mono.empty();
+                                                    })
+                                                    .onErrorResume(e -> {
+                                                        System.out.println(e);
+                                                        return Mono.empty();
+                                                    });
+                                            }
+                                            return Mono.empty();
+                                        })
+                                        .switchIfEmpty(
+                                            Mono.fromRunnable(() -> System.out.println("Inner Message history not found for msgid: " + msgid))
+                                        ).then()
+                                    ).switchIfEmpty(
+                                        Mono.fromRunnable(() -> System.out.println("Outer Message history not found for msgid: " + msgid))
+                                    ).then();
+                            }
+                            case "revive-for-me": {
+                                String msgid = data.getmsgid();
+                                System.out.println("revive " + msgid + " from " + chatId + "me");
+                                return messageTrackHistoryRepo.reviveforme(Userid, msgid).then();
+                            }
+                            case "revive-for-eone": {
+                                String msgid = data.getmsgid();
+                                System.out.println("revive " + msgid + " from " + chatId + " eone");
+                                return messageInfoRepo.reviveforeone(Userid, msgid)
+                                    .flatMapMany(u -> messageTrackHistoryRepo.getmsgid(msgid))
+                                    .flatMap(msg -> {
+                                        System.out.println(msg.getRecieverId());
+                                        if (usersink.containsKey(msg.getRecieverId())) {
+                                            ACKMessageDTO ack = new ACKMessageDTO();
+                                            ack.setchatid(chatId);
+                                            ack.setmsgid(msgid);
+                                            ack.setstatus("revived");
+                                            Sinks.Many<String> ack_sink = usersink.get(msg.getRecieverId());
+                                            return Mono.fromCallable(() -> objectMapper.writeValueAsString(ack))
+                                                .flatMap(ackjson -> {
+                                                    ack_sink.tryEmitNext(ackjson);
+                                                    return Mono.empty();
+                                                })
+                                                .onErrorResume(e -> {
+                                                    System.out.println(e);
+                                                    return Mono.empty();
+                                                });
+                                        }
+                                        return Mono.empty();
+                                    }).then();
+                            }
+                            default:
+                                return Mono.empty();
+                        }
+                    });
+            })
+            .onErrorResume(e -> {
+                System.out.println(e);
+                return Mono.empty();
+            });
     }
 
     public Mono<Void> onconnect(String Userid){
         System.out.println("onconnect");
-        Sinks.Many<String> sender_sink=usersink.get(Userid);
-        return messageInfoRepo.loadpending(Userid)
-        .flatMap(msg0->{
-            
-            try {
-                System.out.println("sending pending");
-                sender_sink.tryEmitNext(objectMapper.writeValueAsString(msg0));
-            } catch (JsonProcessingException e) {
-                // TODO: handle exception
-            }
-         
-        return messageTrackHistoryRepo.updatestatusonconnect(Userid,LocalDateTime.now())
-        .flatMap(msg->{
-            System.out.println("connect");
-            if(usersink.containsKey(msg.getSenderId())){
-                return messageTrackHistoryRepo.getchatidfrommsgid(msg.getMessageId())
-                .flatMap(chatid->{
-                    ACKMessageDTO ack=new ACKMessageDTO();
-                    ack.setchatid(chatid);
-                    ack.setmsgid(msg.getMessageId());
-                    ack.setstatus("delivered");
-                    Sinks.Many<String> ack_sink=usersink.get(msg.getSenderId());
-                    try {
-                        System.out.println("deliver ack");
-                        // Sinks.EmitResult result=ack_sink.tryEmitNext(objectMapper.writeValueAsString(ack));
-                        // if (result.isFailure()) {
-                        //     System.out.println("❌ Emit failed: " + result.name());
-                        // }
-                        ack_sink.emitNext(objectMapper.writeValueAsString(ack),
-                            (signalType, emitResult) -> emitResult == Sinks.EmitResult.FAIL_NON_SERIALIZED
-                        );
+        Sinks.Many<String> sender_sink = usersink.get(Userid);
+        LocalDateTime now = LocalDateTime.now();
 
-                    } catch (JsonProcessingException e3) {
-
+        Mono<Void> sendPendingMono = messageInfoRepo.loadpending(Userid)
+            .doOnNext(msg0 -> {
+                try {
+                    System.out.println("sending pending");
+                    if (sender_sink != null) {
+                        sender_sink.tryEmitNext(objectMapper.writeValueAsString(msg0));
                     }
-                    return Mono.empty();
-                }).then();
-            }
-            return Mono.empty();
-        }).then();
-    }).then();
+                } catch (JsonProcessingException e) {
+                }
+            })
+            .then();
+
+        Mono<Void> updateDeliveredMono = messageTrackHistoryRepo.updatestatusonconnect(Userid, now)
+            .collectList()
+            .flatMap(deliveredMsgs -> {
+                if (deliveredMsgs.isEmpty()) return Mono.empty();
+
+                Map<String, List<String>> senderMsgMap = deliveredMsgs.stream()
+                    .collect(Collectors.groupingBy(
+                        com.letschat.mvp_1.Models.MessageTrackHistory::getSenderId,
+                        Collectors.mapping(com.letschat.mvp_1.Models.MessageTrackHistory::getMessageId, Collectors.toList())
+                    ));
+
+                return Flux.fromIterable(senderMsgMap.entrySet())
+                    .flatMap(entry -> {
+                        String senderId = entry.getKey();
+                        List<String> msgIds = entry.getValue();
+
+                        if (usersink.containsKey(senderId)) {
+                            return messageTrackHistoryRepo.getchatidfrommsgid(msgIds.get(0))
+                                .flatMap(chatid -> {
+                                    ACKMessageDTO ack = new ACKMessageDTO(chatid, msgIds, "delivered", now);
+                                    Sinks.Many<String> ackSink = usersink.get(senderId);
+                                    return sendToSinkAsync(ackSink, ack);
+                                });
+                        }
+                        return Mono.empty();
+                    })
+                    .then();
+            });
+
+        return sendPendingMono.then(updateDeliveredMono);
     }
     public Mono<Void> announce(String Chatid,String purpose,String username,String admin,String adminid){
         String msgId="Msg-"+UUID.randomUUID().toString();

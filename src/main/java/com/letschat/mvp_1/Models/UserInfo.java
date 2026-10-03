@@ -1,6 +1,7 @@
 package com.letschat.mvp_1.Models;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
@@ -22,10 +23,17 @@ public class UserInfo {
     private String Password;
     @Column("RoomNickName")
     private String RoomNickName;//null
+    @Column("Email")
+    private String Email;
+    @Column("Is2FAEnabled")
+    private Boolean is2FAEnabled = false;
+
+    @Transient
+    private int pulseStreak;
 
     public UserInfo(){}
 
-    public UserInfo(String UserId,String PrivateName,String PublicName,String UserProfilePath,int Age,String Gender,Long Location,Long CurrentLocation,String Password,String RoomNickName){
+    public UserInfo(String UserId,String PrivateName,String PublicName,String UserProfilePath,int Age,String Gender,Long Location,Long CurrentLocation,String Password,String RoomNickName,String Email){
         this.UserId=UserId;
         this.PrivateName=PrivateName;
         this.PublicName=PublicName;
@@ -36,6 +44,7 @@ public class UserInfo {
         this.CurrentLocation=CurrentLocation;
         this.Password=Password;
         this.RoomNickName=RoomNickName;
+        this.Email=Email;
     }
 
     public String getUserId(){
@@ -108,4 +117,24 @@ public class UserInfo {
         this.RoomNickName=RoomNickName;
     }
 
+    public int getPulseStreak() {
+        return pulseStreak;
+    }
+    public void setPulseStreak(int pulseStreak) {
+        this.pulseStreak = pulseStreak;
+    }
+
+    public String getEmail(){
+        return Email;
+    }
+    public void setEmail(String Email){
+        this.Email=Email;
+    }
+
+    public Boolean getIs2FAEnabled() {
+        return is2FAEnabled != null && is2FAEnabled;
+    }
+    public void setIs2FAEnabled(Boolean is2FAEnabled) {
+        this.is2FAEnabled = is2FAEnabled;
+    }
 }
