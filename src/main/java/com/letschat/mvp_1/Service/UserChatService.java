@@ -1,5 +1,6 @@
 package com.letschat.mvp_1.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import org.springframework.stereotype.Component;
@@ -150,7 +151,8 @@ public class UserChatService {
             User.setProfile(user.getUserProfile());
 
             return userPulseStreakRepo.findById(user.getUserId())
-                    .map(s -> s.getCurrentStreak() != null ? s.getCurrentStreak() : 0)
+                    .map(s -> s.getEffectiveStreak(LocalDate.now()))
+                    .onErrorReturn(0)
                     .defaultIfEmpty(0)
                     .map(streak -> {
                         User.setPulseStreak(streak);

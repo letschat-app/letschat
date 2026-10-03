@@ -153,7 +153,8 @@ public class PulseService {
                     }
 
                     return streakRepo.upsertStreak(userId, newStreak, today);
-                });
+                })
+                .onErrorResume(e -> streakRepo.upsertStreak(userId, 1, today));
 
         PulseInfo pulse = new PulseInfo();
         pulse.setUserId(userId);
@@ -173,6 +174,7 @@ public class PulseService {
     public Mono<MyPulsesResponseDTO> getMyPulses(String userId) {
         Mono<Integer> streakMono = streakRepo.findById(userId)
                 .map(s -> s.getEffectiveStreak(LocalDate.now()))
+                .onErrorReturn(0)
                 .defaultIfEmpty(0);
 
         return Mono.zip(streakMono, pulseInfoRepo.findMyPulses(userId).collectList())
@@ -298,7 +300,7 @@ public class PulseService {
 
                                 Mono<String> nameMono = userInfoRepo.findById(contactId).map(u -> u.getPublicName()).defaultIfEmpty(contactId);
                                 Mono<String> profileMono = userInfoRepo.findById(contactId).map(u -> u.getUserProfilePath() != null ? u.getUserProfilePath() : "").defaultIfEmpty("");
-                                Mono<Integer> streakMono = streakRepo.findById(contactId).map(s -> s.getEffectiveStreak(LocalDate.now())).defaultIfEmpty(0);
+                                Mono<Integer> streakMono = streakRepo.findById(contactId).map(s -> s.getEffectiveStreak(LocalDate.now())).onErrorReturn(0).defaultIfEmpty(0);
 
                                 return Mono.zip(nameMono, profileMono, streakMono)
                                         .map(tuple -> {

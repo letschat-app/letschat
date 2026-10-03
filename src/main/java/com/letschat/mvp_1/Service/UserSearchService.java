@@ -37,6 +37,7 @@ public class UserSearchService {
 
         Mono<Integer> streakMono = userPulseStreakRepo.findById(user.getUserId())
                 .map(s -> s.getEffectiveStreak(LocalDate.now()))
+                .onErrorReturn(0)
                 .defaultIfEmpty(0);
 
         Mono<List<PulseInfo>> activePulsesMono = pulseInfoRepo.findActiveProfilePulses(user.getUserId(), true, LocalDateTime.now())
