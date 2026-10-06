@@ -15,10 +15,11 @@ public interface PulseInfoRepo extends ReactiveCrudRepository<PulseInfo, Long> {
 
     @Query("""
             SELECT * FROM "PulseInfo" 
-            WHERE "user_id" = :userId AND "status" IN ('active', 'expired') 
+            WHERE "user_id" = :userId 
+              AND "expires_at" > :cutoff 
             ORDER BY "created_at" DESC
             """)
-    Flux<PulseInfo> findMyPulses(String userId);
+    Flux<PulseInfo> findMyPulses(String userId, LocalDateTime cutoff);
 
     @Query("""
             SELECT * FROM "PulseInfo" 

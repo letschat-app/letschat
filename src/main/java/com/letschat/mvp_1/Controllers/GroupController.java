@@ -19,7 +19,10 @@ import com.letschat.mvp_1.Service.GroupCreateService;
 
 import reactor.core.publisher.Mono;
 
-//@CrossOrigin(origins="*")
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "👥 Group Chats", description = "Endpoints for creating and managing group chats")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/group")

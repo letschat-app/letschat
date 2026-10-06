@@ -18,6 +18,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "⏰ Scheduled Messages", description = "Endpoints for scheduling automated messages")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/schedule")

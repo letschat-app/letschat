@@ -8,6 +8,10 @@ import com.letschat.mvp_1.Models.UserTokenModel;
 import com.letschat.mvp_1.Service.UserTokenService;
 
 import reactor.core.publisher.Mono;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "🔔 FCM Push Notifications", description = "Endpoints for registering FCM device push tokens")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/fcm")

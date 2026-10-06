@@ -85,14 +85,26 @@ public class PulseController {
 
     @Operation(summary = "Get My Active & Expired Pulses", description = "Retrieves current user's active/expired pulses along with total view counts and viewer user list.")
     @GetMapping("/mine")
-    public Mono<MyPulsesResponseDTO> getMyPulses(@RequestHeader("User-Id") String userId) {
-        return pulseService.getMyPulses(userId);
+    public Mono<ResponseEntity<Object>> getMyPulses(@RequestHeader("User-Id") String userId) {
+        return pulseService.getMyPulses(userId)
+                .map(resp -> ResponseEntity.ok((Object) resp))
+                .onErrorResume(e -> {
+                    System.err.println("[PulseController] Error fetching my pulses for " + userId + ": " + e.getMessage());
+                    e.printStackTrace();
+                    return Mono.just(ResponseEntity.status(500).body((Object) Map.of("error", e.getMessage() != null ? e.getMessage() : "Failed to fetch pulses")));
+                });
     }
 
     @Operation(summary = "Get Contacts Pulse Feed", description = "Retrieves active pulses posted by contacts, grouped by user with streak & view state.")
     @GetMapping("/feed")
-    public Mono<PulseFeedResponseDTO> getContactsFeed(@RequestHeader("User-Id") String userId) {
-        return pulseService.getContactsFeed(userId);
+    public Mono<ResponseEntity<Object>> getContactsFeed(@RequestHeader("User-Id") String userId) {
+        return pulseService.getContactsFeed(userId)
+                .map(resp -> ResponseEntity.ok((Object) resp))
+                .onErrorResume(e -> {
+                    System.err.println("[PulseController] Error fetching contacts feed for " + userId + ": " + e.getMessage());
+                    e.printStackTrace();
+                    return Mono.just(ResponseEntity.status(500).body((Object) Map.of("error", e.getMessage() != null ? e.getMessage() : "Failed to fetch feed")));
+                });
     }
 
     @Operation(summary = "Record Pulse View", description = "Marks a specific pulse as viewed by the current user.")

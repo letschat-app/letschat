@@ -5,7 +5,7 @@ import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
-@Table("UserInfo")
+@Table("\"UserInfo\"")
 public class UserInfo {
     @Id
     @Column("UserId")

@@ -184,18 +184,24 @@ public class PulseService {
     }
 
     public Mono<MyPulsesResponseDTO> getMyPulses(String userId) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime cutoff = now.minusHours(12);
+
         Mono<Integer> streakMono = streakRepo.findById(userId)
                 .map(s -> s.getEffectiveStreak(LocalDate.now()))
                 .onErrorReturn(0)
                 .defaultIfEmpty(0);
 
-        return Mono.zip(streakMono, pulseInfoRepo.findMyPulses(userId).collectList())
+        return Mono.zip(streakMono, pulseInfoRepo.findMyPulses(userId, cutoff).collectList())
                 .flatMap(tuple -> {
                     int streak = tuple.getT1();
                     List<PulseInfo> pulseList = tuple.getT2();
 
                     return Flux.fromIterable(pulseList)
                             .flatMap(pulse -> {
+                                boolean isExpired = now.isAfter(pulse.getExpiresAt()) || "expired".equals(pulse.getStatus());
+                                String computedStatus = isExpired ? "expired" : "active";
+
                                 MyPulseDetailDTO dto = new MyPulseDetailDTO();
                                 dto.setPulseId(pulse.getPulseId());
                                 dto.setType(pulse.getType());
@@ -205,9 +211,7 @@ public class PulseService {
                                 dto.setVisibility(pulse.getVisibility());
                                 dto.setCreatedAt(pulse.getCreatedAt());
                                 dto.setExpiresAt(pulse.getExpiresAt());
-                                dto.setStatus(pulse.getStatus());
-
-                                boolean isExpired = "expired".equals(pulse.getStatus());
+                                dto.setStatus(computedStatus);
 
                                 Mono<MyPulseDetailDTO> mediaMono = (isExpired || pulse.getPulseMediaId() == null) ?
                                         Mono.just(dto) :
@@ -278,18 +282,22 @@ public class PulseService {
                                 return mediaMono.flatMap(i ->
                                         viewHistoryRepo.hasUserViewed(pulse.getPulseId(), viewerUserId)
                                                 .doOnNext(i::setHasSeen)
+                                                .onErrorReturn(false)
+                                                .defaultIfEmpty(false)
                                                 .thenReturn(i)
                                 );
                             })
                             .collectList()
                             .flatMap(items -> {
-                                Map<String, List<PulseFeedItemDTO>> grouped = items.stream()
-                                        .collect(Collectors.groupingBy(i -> i.getPulseId().toString())); // Temporary grouping handle
+                                if (items.isEmpty()) {
+                                    PulseFeedResponseDTO empty = new PulseFeedResponseDTO();
+                                    empty.setViewerUserId(viewerUserId);
+                                    empty.setContactsCount(0);
+                                    empty.setFeed(List.of());
+                                    return Mono.just(empty);
+                                }
 
-                                return Flux.fromIterable(items)
-                                        .groupBy(PulseFeedItemDTO::getPulseId) // We group by pulse user
-                                        .collectList()
-                                        .flatMap(unused -> buildContactGroupFeed(items, viewerUserId));
+                                return buildContactGroupFeed(items, viewerUserId);
                             });
                 });
     }
@@ -310,8 +318,8 @@ public class PulseService {
                                 String contactId = entry.getKey();
                                 List<PulseFeedItemDTO> pulses = entry.getValue();
 
-                                Mono<String> nameMono = userInfoRepo.findById(contactId).map(u -> u.getPublicName()).defaultIfEmpty(contactId);
-                                Mono<String> profileMono = userInfoRepo.findById(contactId).map(u -> u.getUserProfilePath() != null ? u.getUserProfilePath() : "").defaultIfEmpty("");
+                                Mono<String> nameMono = userInfoRepo.findById(contactId).map(u -> u.getPublicName()).onErrorReturn(contactId).defaultIfEmpty(contactId);
+                                Mono<String> profileMono = userInfoRepo.findById(contactId).map(u -> u.getUserProfilePath() != null ? u.getUserProfilePath() : "").onErrorReturn("").defaultIfEmpty("");
                                 Mono<Integer> streakMono = streakRepo.findById(contactId).map(s -> s.getEffectiveStreak(LocalDate.now())).onErrorReturn(0).defaultIfEmpty(0);
 
                                 return Mono.zip(nameMono, profileMono, streakMono)
@@ -362,7 +370,8 @@ public class PulseService {
     }
 
     public Mono<Map<String, Object>> getAllActivePulseViews(String userId) {
-        return pulseInfoRepo.findMyPulses(userId)
+        LocalDateTime cutoff = LocalDateTime.now().minusHours(12);
+        return pulseInfoRepo.findMyPulses(userId, cutoff)
                 .filter(p -> "active".equals(p.getStatus()))
                 .flatMap(pulse -> viewHistoryRepo.findViewersForPulse(pulse.getPulseId())
                         .collectList()
