@@ -20,6 +20,10 @@ import com.letschat.mvp_1.Service.RoomService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "🚪 Virtual Rooms", description = "Endpoints for creating and managing virtual chat rooms")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/room")

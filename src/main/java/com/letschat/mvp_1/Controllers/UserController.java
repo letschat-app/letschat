@@ -36,6 +36,10 @@ import com.letschat.mvp_1.Service.OtpService;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "👤 User & Authentication", description = "Endpoints for Sign Up, Login, 2FA Verification, User Search, Explore, and Profile Management")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/user")

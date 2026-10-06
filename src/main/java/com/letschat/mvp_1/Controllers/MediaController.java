@@ -40,7 +40,10 @@ import com.letschat.mvp_1.Service.UploadMediaService;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-//@CrossOrigin(origins="*")
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "📁 Media Storage", description = "Endpoints for R2 S3 storage file upload and download presigned URLs")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("/api/files")

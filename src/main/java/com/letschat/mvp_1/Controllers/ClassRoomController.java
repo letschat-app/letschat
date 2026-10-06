@@ -33,6 +33,10 @@ import com.letschat.mvp_1.DTOs.ClassroomStudentStatsDTO;
 import com.letschat.mvp_1.Service.ClassRoomReportService;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@Tag(name = "🏫 Classroom & Assignments", description = "Endpoints for Classrooms, Assignments, Submissions, and Matrix Reports (PDF/Excel/CSV)")
 @CrossOrigin(originPatterns="*")
 @RestController
 @RequestMapping("api/classroom")
