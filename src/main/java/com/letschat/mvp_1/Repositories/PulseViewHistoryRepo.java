@@ -21,8 +21,10 @@ public interface PulseViewHistoryRepo extends ReactiveCrudRepository<PulseViewHi
     Mono<Void> recordView(Long pulseId, String viewerUserId, LocalDateTime viewedAt);
 
     @Query("""
-            SELECT v."viewer_user_id" AS viewerUserId, u."PublicName" AS viewerName, 
-                   u."UserProfilePath" AS viewerProfile, v."viewed_at" AS viewedAt
+            SELECT v."viewer_user_id" AS "viewerUserId", 
+                   u."PublicName" AS "viewerName", 
+                   u."UserProfilePath" AS "viewerProfile", 
+                   v."viewed_at" AS "viewedAt"
             FROM "PulseViewHistory" v
             LEFT JOIN "UserInfo" u ON u."UserId" = v."viewer_user_id"
             WHERE v."pulse_id" = :pulseId
