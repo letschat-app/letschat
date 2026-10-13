@@ -56,13 +56,15 @@ public class UserController {
     private final AdminService adminService;
     private final OtpService otpService;
     private final UserInfoRepo userInfoRepo;
+    private final com.letschat.mvp_1.Service.UsernameValidationService usernameValidationService;
 
     public UserController(UserSignUpService userSignUpService,UserLoginService userLoginService,
         UserSearchService userSearchService,UserChatService userChatService,
         GroupCreateService groupCreateService,ChatBoxService chatBoxService,
         UserProfileService userProfileService,EventService eventService,
         MyWebSocketHandler myWebSocketHandler,AdminService adminService,
-        OtpService otpService, UserInfoRepo userInfoRepo){
+        OtpService otpService, UserInfoRepo userInfoRepo,
+        com.letschat.mvp_1.Service.UsernameValidationService usernameValidationService){
         this.userSignUpService=userSignUpService;
         this.userLoginService=userLoginService;
         this.userSearchService=userSearchService;
@@ -74,6 +76,7 @@ public class UserController {
         this.adminService=adminService;
         this.otpService=otpService;
         this.userInfoRepo=userInfoRepo;
+        this.usernameValidationService=usernameValidationService;
     }
 
     @PostMapping("/create")
@@ -218,6 +221,15 @@ public class UserController {
         return myWebSocketHandler.checkUserStatus(userids);
     }
     
+
+    @GetMapping("/check-username")
+    @Operation(summary = "Check Username Availability & Similarity", description = "Verifies username availability and evaluates similarity against existing usernames across UserInfo and UserChat.")
+    public Mono<ResponseEntity<com.letschat.mvp_1.DTOs.UsernameCheckResultDTO>> checkUsername(
+            @RequestParam String username,
+            @RequestParam(required = false) String excludeUserId) {
+        return usernameValidationService.checkUsername(username, excludeUserId)
+                .map(ResponseEntity::ok);
+    }
 
     @GetMapping("/wake-up")
     public Mono<String> wakeup(){

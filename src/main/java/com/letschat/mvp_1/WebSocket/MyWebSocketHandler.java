@@ -12,6 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -74,12 +75,13 @@ public class MyWebSocketHandler implements WebSocketHandler{
     //chatid<userid,username>
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<String>> userchats = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> chatypes=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> chatLastAccessed = new ConcurrentHashMap<>();
   //  private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
     @Override
     public Mono<Void> handle(WebSocketSession session){
         String sessionid = session.getId();
 
-        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
+        Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer(256, false);
 
         String qry = session.getHandshakeInfo().getUri().getQuery();
         String id = null;
@@ -163,6 +165,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
     public Mono<String> getusername(String chatId,String userId){
         System.out.println(chatId+userId);
         return Mono.defer(() -> {
+            chatLastAccessed.put(chatId, System.currentTimeMillis());
             ConcurrentHashMap<String, String> userMap = username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>());
             String cachedUsername = userMap.get(userId);
             if (cachedUsername != null) {
@@ -180,9 +183,7 @@ public Mono<Map<String,Boolean>> checkUserStatus(List<String> userids){
 }
 
 public void updateUsernameCache(String chatId, String userId, String newName) {
-
-    // username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>())
-    //         .put(userId, newName);
+    chatLastAccessed.put(chatId, System.currentTimeMillis());
     Map<String, String> chatMap = username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>());
     String oldName = chatMap.put(userId, newName);
     this.announce(chatId, "change", oldName, newName, userId);
@@ -194,12 +195,15 @@ public void removeUsernameCache(String chatId, String userId) {
 
     if (map != null) {
         map.remove(userId);
+        if (map.isEmpty()) {
+            username.remove(chatId);
+        }
     }
 }
 public Flux<String> getUserIds(String chatId, String userId) {
 
     return Flux.defer(() -> {
-
+        chatLastAccessed.put(chatId, System.currentTimeMillis());
         CopyOnWriteArrayList<String> cached = userchats.get(chatId);
 
         if (cached != null) {
@@ -237,7 +241,7 @@ public Flux<String> getUserIds(String chatId, String userId) {
 }
 
 public void addUserToChatCache(String chatId, String userId) {
-
+    chatLastAccessed.put(chatId, System.currentTimeMillis());
     userchats.computeIfAbsent(chatId, k -> new CopyOnWriteArrayList<>())
              .addIfAbsent(userId);
 }
@@ -259,6 +263,7 @@ public void removeUserFromChatCache(String chatId, String userId) {
     public Mono<String> getType(String chatid){
         if (chatid == null) return Mono.error(new RuntimeException("chatid is null"));
         return Mono.defer(()->{
+            chatLastAccessed.put(chatid, System.currentTimeMillis());
             String type=chatypes.get(chatid);
             if(type != null){
                 return Mono.just(type);
@@ -266,6 +271,33 @@ public void removeUserFromChatCache(String chatId, String userId) {
 
             return userChatInfoRepo.findTypeByChatId(chatid)
             .doOnNext(type1->chatypes.putIfAbsent(chatid,type1));
+        });
+    }
+
+    @Scheduled(fixedRate = 60 * 60 * 1000)
+    public void cleanIdleCaches() {
+        long now = System.currentTimeMillis();
+        long idleTtl = 60 * 60 * 1000L; // 1 hour
+
+        // 1. Clean "in-active" entries and empty/offline maps from userstatus
+        userstatus.entrySet().removeIf(entry -> {
+            String uid = entry.getKey();
+            ConcurrentHashMap<String, String> chatMap = entry.getValue();
+            if (chatMap == null) return true;
+            chatMap.entrySet().removeIf(e -> !"active".equals(e.getValue()));
+            return chatMap.isEmpty() || !usersink.containsKey(uid);
+        });
+
+        // 2. Evict chats idle for > 1 hour from username, userchats, and chatypes
+        chatLastAccessed.entrySet().removeIf(entry -> {
+            if ((now - entry.getValue()) > idleTtl) {
+                String chatId = entry.getKey();
+                username.remove(chatId);
+                userchats.remove(chatId);
+                chatypes.remove(chatId);
+                return true;
+            }
+            return false;
         });
     }
 

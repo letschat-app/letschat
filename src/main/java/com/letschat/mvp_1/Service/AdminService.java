@@ -121,6 +121,16 @@ public class AdminService {
         // message
         messagesToday.set(0);
         peakMessagesPerMinute.set(0);
+
+        // prune dailyActiveUsers older than 30 days
+        java.time.LocalDate cutoff = java.time.LocalDate.now().minusDays(30);
+        dailyActiveUsers.keySet().removeIf(dateStr -> {
+            try {
+                return java.time.LocalDate.parse(dateStr).isBefore(cutoff);
+            } catch (Exception e) {
+                return true;
+            }
+        });
     }
 
     public Mono<Map<String, Object>> getSpaceAdoptionStats() {

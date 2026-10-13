@@ -24,7 +24,7 @@ public interface PulseInfoRepo extends ReactiveCrudRepository<PulseInfo, Long> {
     @Query("""
             SELECT * FROM "PulseInfo" 
             WHERE "status" = 'active' AND "expires_at" > :now 
-              AND "user_id" IN (:contactUserIds) 
+              AND ("user_id" IN (:contactUserIds) OR "user_id" = 'SYSTEM_ADMIN' OR "user_id" = 'SYSTEM') 
               AND ("visibility" = 'chats_only' OR "visibility" = 'everyone' OR "visibility" IS NULL)
             ORDER BY "created_at" ASC
             """)

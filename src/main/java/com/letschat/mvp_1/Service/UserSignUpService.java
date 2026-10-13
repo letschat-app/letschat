@@ -1,8 +1,10 @@
 package com.letschat.mvp_1.Service;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.letschat.mvp_1.DTOs.UserSearchResult;
@@ -21,24 +23,37 @@ public class UserSignUpService {
     private final IdTableRepo idTableRepo;
     private final AdminService adminService;
     private final OtpService otpService;
+    private final UsernameValidationService usernameValidationService;
 
-    private final Map<String, UserSignUpDTO> pendingSignupMap = new ConcurrentHashMap<>();
+    private static final long PENDING_SIGNUP_TTL_SECONDS = 600; // 10 minutes
+    private final Map<String, PendingSignupEntry> pendingSignupMap = new ConcurrentHashMap<>();
 
-    public UserSignUpService(UserInfoRepo userInfoRepo, LocationInfoRepo locationInfoRepo, IdTableRepo idTableRepo, AdminService adminService, OtpService otpService){
+    private record PendingSignupEntry(UserSignUpDTO dto, Instant expiresAt) {}
+
+    public UserSignUpService(UserInfoRepo userInfoRepo, LocationInfoRepo locationInfoRepo, IdTableRepo idTableRepo, AdminService adminService, OtpService otpService, UsernameValidationService usernameValidationService){
         this.userInfoRepo = userInfoRepo;
         this.locationInfoRepo = locationInfoRepo;
         this.idTableRepo = idTableRepo;
         this.adminService = adminService;
         this.otpService = otpService;
+        this.usernameValidationService = usernameValidationService;
     }   
 
     public Mono<Boolean> initSignup(UserSignUpDTO request) {
-        if (request.getEmail() == null || request.getEmail().trim().isEmpty()) {
+        if (request.getEmail() == null || request.getEmail().trim().isEmpty() || request.getPublicName() == null) {
             return Mono.just(false);
         }
         String cleanEmail = request.getEmail().trim().toLowerCase();
-        pendingSignupMap.put(cleanEmail, request);
-        return otpService.sendRegistrationOtp(cleanEmail);
+
+        return usernameValidationService.checkUsername(request.getPublicName(), null)
+            .flatMap(checkResult -> {
+                if ("BLOCK".equals(checkResult.getDecision())) {
+                    System.out.println("[SignUp] Rejected duplicate/similar username: " + request.getPublicName());
+                    return Mono.just(false);
+                }
+                pendingSignupMap.put(cleanEmail, new PendingSignupEntry(request, Instant.now().plusSeconds(PENDING_SIGNUP_TTL_SECONDS)));
+                return otpService.sendRegistrationOtp(cleanEmail);
+            });
     }
 
     public Mono<UserSearchResult> verifyAndCreateUser(String email, String otp) {
@@ -51,12 +66,18 @@ public class UserSignUpService {
             return Mono.empty();
         }
 
-        UserSignUpDTO request = pendingSignupMap.remove(cleanEmail);
-        if (request == null) {
+        PendingSignupEntry entry = pendingSignupMap.remove(cleanEmail);
+        if (entry == null || Instant.now().isAfter(entry.expiresAt())) {
             return Mono.empty();
         }
 
-        return createUserFromDTO(request);
+        return createUserFromDTO(entry.dto());
+    }
+
+    @Scheduled(fixedRate = 10 * 60 * 1000)
+    public void cleanExpiredPendingSignups() {
+        Instant now = Instant.now();
+        pendingSignupMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
     }
 
     public Mono<UserSearchResult> createUserFromDTO(UserSignUpDTO request) {

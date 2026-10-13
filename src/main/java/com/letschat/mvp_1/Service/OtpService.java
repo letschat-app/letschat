@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import reactor.core.publisher.Mono;
@@ -154,6 +155,14 @@ public class OtpService {
             return true;
         }
         return false;
+    }
+
+    @Scheduled(fixedRate = 10 * 60 * 1000)
+    public void cleanExpiredOtps() {
+        Instant now = Instant.now();
+        registrationOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
+        forgotPasswordOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
+        twoFactorOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
     }
 
     private Mono<Boolean> sendMail(String toEmail, String subject, String htmlContent) {

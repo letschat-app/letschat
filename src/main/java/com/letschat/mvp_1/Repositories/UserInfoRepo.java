@@ -74,4 +74,50 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
 
         @Query("update \"UserInfo\" set \"Is2FAEnabled\"=:enabled where \"UserId\"=:userId or \"Email\"=:userId returning *")
         Mono<UserInfo> update2FAStatus(String userId, boolean enabled);
+
+        @Query("""
+            SELECT EXISTS (
+                SELECT 1 FROM "UserInfo" 
+                WHERE (LOWER("PublicName") = :name OR LOWER("PrivateName") = :name OR LOWER("RoomNickName") = :name)
+                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
+                UNION ALL
+                SELECT 1 FROM "UserChat" 
+                WHERE LOWER("UserName") = :name
+                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
+            )
+            """)
+        Mono<Boolean> existsExactName(String name, String excludeUserId);
+
+        @Query("""
+            SELECT DISTINCT name FROM (
+                SELECT "PublicName" AS name FROM "UserInfo" 
+                WHERE (LOWER("PublicName") LIKE :prefix1 || '%' OR LOWER("PublicName") LIKE :prefix2 || '%')
+                  AND LENGTH("PublicName") BETWEEN :minLen AND :maxLen
+                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
+
+                UNION
+
+                SELECT "PrivateName" AS name FROM "UserInfo" 
+                WHERE (LOWER("PrivateName") LIKE :prefix1 || '%' OR LOWER("PrivateName") LIKE :prefix2 || '%')
+                  AND LENGTH("PrivateName") BETWEEN :minLen AND :maxLen
+                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
+
+                UNION
+
+                SELECT "RoomNickName" AS name FROM "UserInfo" 
+                WHERE "RoomNickName" IS NOT NULL 
+                  AND (LOWER("RoomNickName") LIKE :prefix1 || '%' OR LOWER("RoomNickName") LIKE :prefix2 || '%')
+                  AND LENGTH("RoomNickName") BETWEEN :minLen AND :maxLen
+                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
+
+                UNION
+
+                SELECT "UserName" AS name FROM "UserChat" 
+                WHERE "UserName" IS NOT NULL 
+                  AND (LOWER("UserName") LIKE :prefix1 || '%' OR LOWER("UserName") LIKE :prefix2 || '%')
+                  AND LENGTH("UserName") BETWEEN :minLen AND :maxLen
+                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
+            ) AS candidate_names
+            """)
+        Flux<String> findSimilarCandidates(String prefix1, String prefix2, int minLen, int maxLen, String excludeUserId);
 }

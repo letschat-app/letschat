@@ -318,9 +318,16 @@ public class PulseService {
                                 String contactId = entry.getKey();
                                 List<PulseFeedItemDTO> pulses = entry.getValue();
 
-                                Mono<String> nameMono = userInfoRepo.findById(contactId).map(u -> u.getPublicName()).onErrorReturn(contactId).defaultIfEmpty(contactId);
-                                Mono<String> profileMono = userInfoRepo.findById(contactId).map(u -> u.getUserProfilePath() != null ? u.getUserProfilePath() : "").onErrorReturn("").defaultIfEmpty("");
-                                Mono<Integer> streakMono = streakRepo.findById(contactId).map(s -> s.getEffectiveStreak(LocalDate.now())).onErrorReturn(0).defaultIfEmpty(0);
+                                boolean isSystem = "SYSTEM_ADMIN".equalsIgnoreCase(contactId) || "SYSTEM".equalsIgnoreCase(contactId);
+                                Mono<String> nameMono = isSystem
+                                        ? Mono.just("LetsChat Official")
+                                        : userInfoRepo.findById(contactId).map(u -> u.getPublicName()).onErrorReturn(contactId).defaultIfEmpty(contactId);
+                                Mono<String> profileMono = isSystem
+                                        ? Mono.just("")
+                                        : userInfoRepo.findById(contactId).map(u -> u.getUserProfilePath() != null ? u.getUserProfilePath() : "").onErrorReturn("").defaultIfEmpty("");
+                                Mono<Integer> streakMono = isSystem
+                                        ? Mono.just(0)
+                                        : streakRepo.findById(contactId).map(s -> s.getEffectiveStreak(LocalDate.now())).onErrorReturn(0).defaultIfEmpty(0);
 
                                 return Mono.zip(nameMono, profileMono, streakMono)
                                         .map(tuple -> {
@@ -336,6 +343,13 @@ public class PulseService {
                             })
                             .collectList()
                             .map(groups -> {
+                                groups.sort((g1, g2) -> {
+                                    boolean s1 = "SYSTEM_ADMIN".equalsIgnoreCase(g1.getContactUserId()) || "SYSTEM".equalsIgnoreCase(g1.getContactUserId());
+                                    boolean s2 = "SYSTEM_ADMIN".equalsIgnoreCase(g2.getContactUserId()) || "SYSTEM".equalsIgnoreCase(g2.getContactUserId());
+                                    if (s1 && !s2) return -1;
+                                    if (!s1 && s2) return 1;
+                                    return 0;
+                                });
                                 PulseFeedResponseDTO response = new PulseFeedResponseDTO();
                                 response.setViewerUserId(viewerUserId);
                                 response.setContactsCount(groups.size());
