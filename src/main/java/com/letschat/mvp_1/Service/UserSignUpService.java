@@ -80,12 +80,20 @@ public class UserSignUpService {
         pendingSignupMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
     }
 
-    public Mono<UserSearchResult> createUserFromDTO(UserSignUpDTO request) {
-        return locationInfoRepo.findExact(request.getStateName(), request.getDistrictName(), request.getVillageName())
-        .flatMap(location -> generateId().flatMap(id -> {
-            System.out.println("flat");
-            return userInfoRepo.insertWithEmail(id, request.getPrivateName(), request.getPublicName(), request.getAge(), request.getGender(), location.getLocationId(), request.getPassword(), request.getEmail())
-            .doOnSuccess(msg -> adminService.onUserRegistered(id))
+    private Mono<UserSearchResult> persistAndWelcomeUser(String id, UserSignUpDTO request, long locationId) {
+        return userInfoRepo.insertWithEmail(id, request.getPrivateName(), request.getPublicName(), request.getAge(), request.getGender(), locationId, request.getPassword(), request.getEmail())
+            .doOnSuccess(user -> {
+                adminService.onUserRegistered(id);
+                String targetEmail = (user != null && user.getEmail() != null) ? user.getEmail() : request.getEmail();
+                String username = (user != null && user.getPublicName() != null) ? user.getPublicName() : request.getPublicName();
+                if (targetEmail != null && !targetEmail.trim().isEmpty()) {
+                    otpService.sendWelcomeEmail(targetEmail, username, id)
+                        .subscribe(
+                            sent -> System.out.println("[SignUp] Welcome email dispatched to " + targetEmail + ": " + sent),
+                            err -> System.err.println("[SignUp] Failed to dispatch welcome email: " + err.getMessage())
+                        );
+                }
+            })
             .map(user -> {
                 UserSearchResult result = new UserSearchResult();
                 result.setUserId(id);
@@ -93,27 +101,16 @@ public class UserSignUpService {
                 result.setProfile(user.getUserProfilePath());
                 return result;
             });
-        }))
-        .switchIfEmpty(Mono.defer(() -> {
-            System.out.println("switch:" + request.getDistrictName() + request.getStateName());
-            LocationInfo locationInfo = new LocationInfo();
-            locationInfo.setStateName(request.getStateName());
-            locationInfo.setDistrictName(request.getDistrictName());
-            locationInfo.setVillageName(request.getVillageName());
-            return locationInfoRepo.insert(request.getStateName(), request.getDistrictName(), request.getVillageName())
-            .flatMap(location -> generateId().flatMap(id -> {
-                System.out.println(location.getLocationId());
-                return userInfoRepo.insertWithEmail(id, request.getPrivateName(), request.getPublicName(), request.getAge(), request.getGender(), location.getLocationId(), request.getPassword(), request.getEmail())
-                .doOnSuccess(msg -> adminService.onUserRegistered(id))
-                .map(user -> {
-                    UserSearchResult result = new UserSearchResult();
-                    result.setUserId(id);
-                    result.setUserName(user.getPublicName());
-                    result.setProfile(user.getUserProfilePath());
-                    return result;
-                });
+    }
+
+    public Mono<UserSearchResult> createUserFromDTO(UserSignUpDTO request) {
+        return locationInfoRepo.findExact(request.getStateName(), request.getDistrictName(), request.getVillageName())
+            .flatMap(location -> generateId().flatMap(id -> persistAndWelcomeUser(id, request, location.getLocationId())))
+            .switchIfEmpty(Mono.defer(() -> {
+                System.out.println("switch:" + request.getDistrictName() + request.getStateName());
+                return locationInfoRepo.insert(request.getStateName(), request.getDistrictName(), request.getVillageName())
+                    .flatMap(location -> generateId().flatMap(id -> persistAndWelcomeUser(id, request, location.getLocationId())));
             }));
-        }));
     }
 
     public Mono<String> createUser(UserSignUpDTO request){

@@ -63,7 +63,7 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
         @Query("select * from \"UserInfo\" where \"Email\"=:email limit 1")
         Mono<UserInfo> findByEmail(String email);
 
-        @Query("select * from \"UserInfo\" where \"UserId\"=:identifier or \"Email\"=:identifier limit 1")
+        @Query("select * from \"UserInfo\" where \"UserId\"=:identifier or \"Email\"=:identifier or \"PublicName\"=:identifier limit 1")
         Mono<UserInfo> findByIdentifier(String identifier);
 
         @Query("insert into \"UserInfo\"(\"UserId\",\"PrivateName\",\"PublicName\",\"Age\",\"Gender\",\"Location\",\"Password\",\"Email\") values(:UserId,:PrivateName,:PublicName,:Age,:Gender,:Location,:Password,:Email) returning *")
