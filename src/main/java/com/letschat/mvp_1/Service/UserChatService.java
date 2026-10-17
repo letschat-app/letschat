@@ -168,40 +168,75 @@ public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
             System.out.println(info.getUserName());
             System.out.println(type);
 
-            Mono<Void> updateUsername =
-                userChatInfoRepo.updateUsername(info.getUserName(),info.getProfile(), Chatid, info.getUserId())
-                .then(Mono.fromRunnable(() ->
-                    myWebSocketHandler.updateUsernameCache(
-                        Chatid,
-                        info.getUserId(),
-                        info.getUserName()
-                    )
-                ));
+            return userChatInfoRepo.getUsername(Chatid, info.getUserId())
+                .defaultIfEmpty("")
+                .flatMap(oldName -> {
+                    boolean nameChanged = !oldName.isEmpty() && !oldName.equals(info.getUserName());
 
-            if ("private".equals(type)) {
+                    Mono<Void> announceMono = nameChanged
+                        ? myWebSocketHandler.announce(Chatid, "username_change", oldName, info.getUserName(), info.getUserId())
+                        : Mono.empty();
 
-                return updateUsername
-                        .then(userChatInfoRepo.updateChatname(
-                            info.getUserName(),
-                            info.getProfile(),
-                            Chatid,
-                            info.getUserId()
+                    Mono<Void> updateUsername =
+                        userChatInfoRepo.updateUsername(info.getUserName(), info.getProfile(), Chatid, info.getUserId())
+                        .then(Mono.fromRunnable(() ->
+                            myWebSocketHandler.updateUsernameCache(
+                                Chatid,
+                                info.getUserId(),
+                                info.getUserName()
+                            )
                         ))
-                        .thenReturn("ok");
+                        .then(announceMono);
 
-            } else {
+                    if ("private".equals(type)) {
 
-                return updateUsername
-                        .thenReturn("ok");
-            }
+                        return updateUsername
+                                .then(userChatInfoRepo.updateChatname(
+                                    info.getUserName(),
+                                    info.getProfile(),
+                                    Chatid,
+                                    info.getUserId()
+                                ))
+                                .thenReturn("ok");
+
+                    } else {
+
+                        return updateUsername
+                                .thenReturn("ok");
+                    }
+                });
         })
         .switchIfEmpty(Mono.just("failed"));
 }
 
 
-    public Mono<String> addspace(ChatSpace data){
+    public Mono<String> addspace(ChatSpace data) {
+        return addspace(data, null, null);
+    }
+
+    public Mono<String> addspace(ChatSpace data, String userId, String userName) {
         return chatSpaceRepo.save(data)
-        .flatMap(space->Mono.just("success"));
+            .flatMap(space -> {
+                String safeChatId = space.getChatId();
+                int spaceId = (space.getSpaceId() != null) ? space.getSpaceId().intValue() : 0;
+                String spaceName = (space.getSpaceName() != null && !space.getSpaceName().trim().isEmpty())
+                    ? space.getSpaceName().trim()
+                    : "Space " + spaceId;
+
+                Mono<String> resolveUserName = (userName != null && !userName.trim().isEmpty())
+                    ? Mono.just(userName.trim())
+                    : (userId != null
+                        ? userChatInfoRepo.getUsername(safeChatId, userId)
+                            .switchIfEmpty(userInfoRepo.findByUserId(userId).map(UserInfo::getPublicName))
+                            .defaultIfEmpty("Admin")
+                        : Mono.just("Admin"));
+
+                String safeUserId = (userId != null) ? userId : "server";
+
+                return resolveUserName.flatMap(creatorName ->
+                    myWebSocketHandler.announce(safeChatId, "space_created", spaceName, creatorName, safeUserId, spaceId)
+                ).thenReturn("success");
+            });
     }
 
     public Flux<ChatSpace> getspace(String chatid){

@@ -35,4 +35,12 @@ public interface RoomRepo extends ReactiveCrudRepository<RoomInfo,String>{
     Mono<Integer> increaseMembers(String roomId);
 
     Flux<RoomInfo> findByCreator(String creator);
+
+    @Query("""
+        SELECT EXISTS (
+            SELECT 1 FROM "Room"
+            WHERE LOWER(REPLACE(REGEXP_REPLACE(TRIM("room_name"), '\\s+', ' ', 'g'), '0', 'o')) = :normalizedName
+        )
+    """)
+    Mono<Boolean> existsByNormalizedName(String normalizedName);
 }

@@ -15,6 +15,7 @@ public class ChatBoxReturnDTO {
     private String Role;
     private String Profile;
     private Long noOfMembers; 
+    private Boolean isMuted;
 
     public ChatBoxReturnDTO(){}
     public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role,String Profile,Long noOfMembers){
@@ -90,5 +91,29 @@ public class ChatBoxReturnDTO {
     }
     public void setNoOfMembers(Long noOfMembers){
         this.noOfMembers=noOfMembers;
+    }
+
+    private String motto;
+    private String description;
+
+    public String getMotto() {
+        return motto != null ? motto : (description != null ? description : Status);
+    }
+    public void setMotto(String motto) {
+        this.motto = motto;
+    }
+
+    public String getDescription() {
+        return description != null ? description : (motto != null ? motto : Status);
+    }
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public Boolean getIsMuted() {
+        return isMuted != null ? isMuted : false;
+    }
+    public void setIsMuted(Boolean isMuted) {
+        this.isMuted = isMuted;
     }
 }

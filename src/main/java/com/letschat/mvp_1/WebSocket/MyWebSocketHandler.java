@@ -76,6 +76,7 @@ public class MyWebSocketHandler implements WebSocketHandler{
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<String>> userchats = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> chatypes=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> chatLastAccessed = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> msgSenderCache = new ConcurrentHashMap<>();
   //  private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
     @Override
     public Mono<Void> handle(WebSocketSession session){
@@ -185,8 +186,7 @@ public Mono<Map<String,Boolean>> checkUserStatus(List<String> userids){
 public void updateUsernameCache(String chatId, String userId, String newName) {
     chatLastAccessed.put(chatId, System.currentTimeMillis());
     Map<String, String> chatMap = username.computeIfAbsent(chatId, k -> new ConcurrentHashMap<>());
-    String oldName = chatMap.put(userId, newName);
-    this.announce(chatId, "change", oldName, newName, userId);
+    chatMap.put(userId, newName);
 }
 
 public void removeUsernameCache(String chatId, String userId) {
@@ -569,6 +569,8 @@ private Mono<MessageResult> sendMessage(
         "sendername:" + username
     );
 
+    msgSenderCache.put(msgId, userId);
+
     Sinks.Many<String> receiverSink = usersink.get(receiverId);
 
     SendingMessageDTO msg =
@@ -580,13 +582,19 @@ private Mono<MessageResult> sendMessage(
             userId
         );
 
-    fireNotification(
-        receiverId,
-        chatId,
-        username,
-        data,
-        type
+    boolean isReceiverActive = receiverSink != null && "active".equals(
+        userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId)
     );
+
+    if (!isReceiverActive) {
+        fireNotification(
+            receiverId,
+            chatId,
+            username,
+            data,
+            type
+        );
+    }
 
     // CLASSROOM / ROOM
     if ("classroom".equals(type) || "room".equals(type)) {
@@ -681,7 +689,14 @@ private Mono<MessageResult> sendMessageWithPoll(
     tempDTO.setcontent(msg.getcontent());
     tempDTO.settype(msg.gettype());
     tempDTO.setspaceid(msg.getspaceid());
-    fireNotification(receiverId, chatId, username, tempDTO, type);
+
+    boolean isReceiverActive = receiverSink != null && "active".equals(
+        userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId)
+    );
+
+    if (!isReceiverActive) {
+        fireNotification(receiverId, chatId, username, tempDTO, type);
+    }
 
     if (receiverSink != null) {
         userstatus.computeIfAbsent(receiverId, k -> new ConcurrentHashMap<>()).putIfAbsent(chatId, "in-active");
@@ -758,7 +773,43 @@ private void fireNotification(String receiverId, String chatId,
                                String username, ReceivingMessageDTO data, String type) {
     String payload = data.getspaceid() + "/%20/" + data.gettype()
                    + "/%20/" + username + "/%20/" + data.getcontent();
-    notificationService.notifyUser(receiverId, chatId, username, payload, type)
+    String repliedTo = data.getrepliedto();
+
+    Mono<Boolean> isReplyToUserMono;
+    if (repliedTo != null && !repliedTo.trim().isEmpty()) {
+        String cachedSender = msgSenderCache.get(repliedTo);
+        if (cachedSender != null) {
+            isReplyToUserMono = Mono.just(receiverId.equals(cachedSender));
+        } else {
+            isReplyToUserMono = userChatInfoRepo.findSenderInChat(repliedTo)
+                .map(senderInfo -> {
+                    if (senderInfo != null && senderInfo.getSenderId() != null) {
+                        msgSenderCache.put(repliedTo, senderInfo.getSenderId());
+                        return receiverId.equals(senderInfo.getSenderId());
+                    }
+                    return false;
+                })
+                .defaultIfEmpty(false);
+        }
+    } else {
+        isReplyToUserMono = Mono.just(false);
+    }
+
+    userChatInfoRepo.findChatNameByChatId(chatId)
+        .defaultIfEmpty(username)
+        .flatMap(chatName ->
+            isReplyToUserMono.flatMap(isReply -> {
+                String title;
+                if (isReply) {
+                    title = "You got a reply in " + chatName;
+                } else if ("room".equalsIgnoreCase(type)) {
+                    title = "New messages in " + chatName;
+                } else {
+                    title = chatName != null ? chatName : username;
+                }
+                return notificationService.notifyUser(receiverId, chatId, title, payload, type, isReply, repliedTo);
+            })
+        )
         .subscribeOn(Schedulers.boundedElastic())
         .onErrorResume(e -> {
             System.out.println("FCM error: " + e);
@@ -1150,62 +1201,84 @@ private void fireNotification(String receiverId, String chatId,
 
         return sendPendingMono.then(updateDeliveredMono);
     }
-    public Mono<Void> announce(String Chatid,String purpose,String username,String admin,String adminid){
-        String msgId="Msg-"+UUID.randomUUID().toString();
-        LocalDateTime now=LocalDateTime.now();
+    public Mono<Void> announce(String Chatid, String purpose, String username, String admin, String adminid) {
+        return announce(Chatid, purpose, username, admin, adminid, 0);
+    }
+
+    public Mono<Void> announce(String Chatid, String purpose, String username, String admin, String adminid, Integer spaceId) {
+        String msgId = "Msg-" + UUID.randomUUID().toString();
+        LocalDateTime now = LocalDateTime.now();
         System.out.println(adminid);
-        String sender="server";
+        String sender = "server";
         String contents;
         String youcontent;
-        if(purpose=="added"){
-            contents=admin+" added "+username;
-            youcontent="You added "+username;
+        int targetSpace = (spaceId != null) ? spaceId : 0;
+        String safeAdmin = (admin != null && !admin.trim().isEmpty()) ? admin.trim() : "Admin";
+        String safeUsername = (username != null) ? username.trim() : "";
+        String safeAdminId = (adminid != null) ? adminid.trim() : "";
+
+        if ("added".equals(purpose)) {
+            contents = safeAdmin + " added " + safeUsername;
+            youcontent = "You added " + safeUsername;
+        } else if ("promote".equals(purpose)) {
+            contents = safeUsername + " is now an admin by " + safeAdmin;
+            youcontent = safeUsername + " is now an admin by You";
+        } else if ("removed".equals(purpose)) {
+            contents = safeAdmin + " removed " + safeUsername;
+            youcontent = "You removed " + safeUsername;
+        } else if ("created".equals(purpose)) {
+            contents = safeAdmin + " created " + safeUsername;
+            youcontent = "You created " + safeUsername;
+        } else if ("space_created".equals(purpose)) {
+            contents = safeAdmin + " created space '" + safeUsername + "'";
+            youcontent = "You created space '" + safeUsername + "'";
+        } else if ("group_name".equals(purpose)) {
+            contents = safeAdmin + " changed the group name to '" + safeUsername + "'";
+            youcontent = "You changed the group name to '" + safeUsername + "'";
+        } else if ("group_profile".equals(purpose)) {
+            contents = safeAdmin + " changed the group icon";
+            youcontent = "You changed the group icon";
+        } else if ("group_description".equals(purpose)) {
+            contents = safeAdmin + " changed the group description";
+            youcontent = "You changed the group description";
+        } else if ("change".equals(purpose) || "username_change".equals(purpose)) {
+            if (!safeUsername.isEmpty() && !safeUsername.equals(safeAdmin)) {
+                contents = safeUsername + " changed their name to " + safeAdmin;
+                youcontent = "You changed your name to " + safeAdmin;
+            } else {
+                contents = safeAdmin + " changed their name";
+                youcontent = "You changed your name to " + safeAdmin;
+            }
+        } else {
+            contents = safeUsername + " left";
+            youcontent = "You left";
         }
-        else if(purpose=="promote"){
-            contents=username+" is now an admin by "+admin;
-            youcontent=username+" is now an admin by You";
-        }
-        else if(purpose=="removed"){
-            contents=admin+" removed "+username;
-            youcontent="You removed "+username;
-        }
-        else if(purpose=="created"){
-            contents=admin+ " created "+username;
-            youcontent="You created "+username;
-        }
-        else if(purpose=="change"){
-            contents=admin+" change profile to "+username;
-            youcontent="You changed your profile to"+username;
-        }
-        else{
-            contents=username +" left";
-            youcontent="You left";
-        }
-        String Userid=adminid;
+        String Userid = safeAdminId;
         System.out.println(contents);
-        AtomicReference<String> status=new AtomicReference<>();
-       // AtomicReference<LocalDateTime> deltime=new AtomicReference<>();
-        status.set("pending");
-        return messageInfoRepo.insert(msgId, Chatid, Userid, "banner", contents+"/"+youcontent, null, null, now,0)
-        .flatMap(info->{
-                    return getUserIds(Chatid,null)
-                    .flatMap(userids->{
+        String messageType = ("group_name".equals(purpose) || "change".equals(purpose) || "username_change".equals(purpose))
+                ? "banner-pin"
+                : "banner";
+
+        AtomicReference<String> status = new AtomicReference<>("pending");
+        return messageInfoRepo.insert(msgId, Chatid, Userid, messageType, contents + "/" + youcontent, null, null, now, targetSpace)
+        .flatMap(info -> {
+                    return getUserIds(Chatid, null)
+                    .flatMap(userids -> {
                         System.out.println(userids);
-                        Sinks.Many<String> reciever_sink=usersink.get(userids);
+                        Sinks.Many<String> reciever_sink = usersink.get(userids);
                         
-                        SendingMessageDTO msg=new SendingMessageDTO();
+                        SendingMessageDTO msg = new SendingMessageDTO();
                         msg.setmsgid(msgId);
                         msg.setchatid(Chatid);
-                        msg.settype("banner");
-                        if(adminid.equals(userids)){
+                        msg.settype(messageType);
+                        if (safeAdminId != null && safeAdminId.equals(userids)) {
                             msg.setcontent(youcontent);
-                        }
-                        else{
+                        } else {
                             msg.setcontent(contents);
                         }                       
                         msg.setsendername(sender);
                         msg.settimestamp(now);
-                        msg.setspaceid(0);
+                        msg.setspaceid(targetSpace);
                         System.out.println(msg.getcontent());
                         try {
                             String sendjson=objectMapper.writeValueAsString(msg);
@@ -1293,8 +1366,14 @@ private void fireNotification(String receiverId, String chatId,
             } catch (Exception e) {
                 return Mono.error(e);
             }
-            String payload=msg.getSpaceId()+"/%20/"+msg.getMessageType()+"/%20/"+username+"/%20/"+msg.getMessage();
-            notificationService.notifyUser(uid,msg.getChatId(),username,payload,null).subscribe();                                
+            boolean isReceiverActive = receiverSink != null && "active".equals(
+                userstatus.getOrDefault(uid, new ConcurrentHashMap<>()).get(msg.getChatId())
+            );
+
+            if (!uid.equals(msg.getSenderId()) && !isReceiverActive) {
+                String payload = msg.getSpaceId() + "/%20/" + msg.getMessageType() + "/%20/" + username + "/%20/" + msg.getMessage();
+                notificationService.notifyUser(uid, msg.getChatId(), username, payload, null).subscribe();
+            }                                
          
             if (receiverSink != null) {
 
@@ -1336,4 +1415,46 @@ private void fireNotification(String receiverId, String chatId,
     )
     .then();
 }
+
+    public Mono<Void> broadcastEventSync(String chatId, String senderId, Object payload) {
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+            return getUserIds(chatId, senderId)
+                .doOnNext(memberId -> {
+                    Sinks.Many<String> sink = usersink.get(memberId);
+                    if (sink != null) {
+                        sink.tryEmitNext(json);
+                    }
+                })
+                .then();
+        } catch (Exception e) {
+            return Mono.empty();
+        }
+    }
+
+    public Mono<Void> broadcastToChat(String chatId, Object payload) {
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+            return getUserIds(chatId, "")
+                .doOnNext(memberId -> {
+                    Sinks.Many<String> sink = usersink.get(memberId);
+                    if (sink != null) {
+                        sink.tryEmitNext(json);
+                    }
+                })
+                .then();
+        } catch (Exception e) {
+            return Mono.empty();
+        }
+    }
+
+    public void sendToUser(String targetUserId, Object payload) {
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+            Sinks.Many<String> sink = usersink.get(targetUserId);
+            if (sink != null) {
+                sink.tryEmitNext(json);
+            }
+        } catch (Exception e) {}
+    }
 }

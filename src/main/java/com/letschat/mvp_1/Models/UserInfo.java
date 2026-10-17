@@ -27,6 +27,10 @@ public class UserInfo {
     private String Email;
     @Column("Is2FAEnabled")
     private Boolean is2FAEnabled = false;
+    @Column("ShowBusySlotsExternal")
+    private Boolean showBusySlotsExternal = false;
+    @Column("BookingSlug")
+    private String bookingSlug;
 
     @Transient
     private int pulseStreak;
@@ -136,5 +140,19 @@ public class UserInfo {
     }
     public void setIs2FAEnabled(Boolean is2FAEnabled) {
         this.is2FAEnabled = is2FAEnabled;
+    }
+
+    public Boolean getShowBusySlotsExternal() {
+        return showBusySlotsExternal != null && showBusySlotsExternal;
+    }
+    public void setShowBusySlotsExternal(Boolean showBusySlotsExternal) {
+        this.showBusySlotsExternal = showBusySlotsExternal;
+    }
+
+    public String getBookingSlug() {
+        return bookingSlug;
+    }
+    public void setBookingSlug(String bookingSlug) {
+        this.bookingSlug = bookingSlug;
     }
 }

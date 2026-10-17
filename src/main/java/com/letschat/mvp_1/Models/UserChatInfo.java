@@ -33,6 +33,8 @@ public class UserChatInfo {
     private String ChatProfile;
     @Column("UserProfile")
     private String UserProfile;
+    @Column("IsMuted")
+    private Boolean IsMuted;
 
     public UserChatInfo(){}
     public UserChatInfo(Long Id,String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,String Status,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile){
@@ -132,6 +134,13 @@ public class UserChatInfo {
     }
     public void setUserProfile(String UserProfile){
         this.UserProfile=UserProfile;
+    }
+
+    public Boolean getIsMuted(){
+        return IsMuted != null ? IsMuted : false;
+    }
+    public void setIsMuted(Boolean IsMuted){
+        this.IsMuted=IsMuted;
     }
 
 }

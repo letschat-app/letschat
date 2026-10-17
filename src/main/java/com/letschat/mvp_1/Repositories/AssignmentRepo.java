@@ -11,7 +11,7 @@ import reactor.core.publisher.Flux;
 public interface AssignmentRepo extends  ReactiveCrudRepository<AssignmentInfo, Long>{
     @Query("""
             SELECT "uc"."UserId",
-       ARRAY_AGG("ai"."assignment_id") AS "missing_assignment_ids"
+       ARRAY_AGG("ai"."assignment_id") AS "assignment_ids"
 FROM "UserChat" "uc"
 JOIN "AssignmentInfo" "ai"
     ON "uc"."ChatId" = "ai"."chat_id"

@@ -47,9 +47,10 @@ public interface PulseInfoRepo extends ReactiveCrudRepository<PulseInfo, Long> {
 
     @Query("""
             SELECT * FROM "PulseInfo" 
-            WHERE "status" = 'active'
+            WHERE ("status" = 'active' AND "expires_at" <= :now)
+               OR ("status" = 'expired' AND "pulse_media_id" IS NOT NULL)
             """)
-    Flux<PulseInfo> findTodayActivePulses();
+    Flux<PulseInfo> findExpiredPulsesWithMedia(LocalDateTime now);
 
     @Query("""
             SELECT * FROM "PulseInfo" 

@@ -31,10 +31,11 @@ public class PulsePurgeService {
         this.viewHistoryRepo = viewHistoryRepo;
     }
 
-    @Scheduled(cron = "59 59 23 * * *")
-    public void executeNightlyPurge() {
-        System.out.println("[PULSE PURGE] Starting Nightly Cleanup at 11:59:59 PM");
-        LocalDateTime cutoff = LocalDateTime.now().minusDays(1).withNano(0);
+    @Scheduled(cron = "0 0 */6 * * *")
+    public void executePurge() {
+        LocalDateTime now = LocalDateTime.now();
+        System.out.println("[PULSE PURGE] Starting 6-Hour Cleanup for 24-hr expired pulse media at " + now);
+        LocalDateTime cutoff = now.minusDays(1).withNano(0);
 
         // Phase 1: Hard delete Day 2 expired pulses & view history
         pulseInfoRepo.findExpiredPulsesOlderThan(cutoff)
@@ -42,8 +43,8 @@ public class PulsePurgeService {
                     .then(pulseInfoRepo.deleteById(pulse.getPulseId()))
             )
             .then(
-                // Phase 2: Delete Cloud R2 media & expire Day 1 active pulses
-                pulseInfoRepo.findTodayActivePulses()
+                // Phase 2: Delete expired pulse media from Cloud R2 & mark expired
+                pulseInfoRepo.findExpiredPulsesWithMedia(now)
                     .flatMap(pulse -> {
                         if (pulse.getPulseMediaId() == null) {
                             return pulseInfoRepo.markExpired(pulse.getPulseId());
@@ -57,7 +58,7 @@ public class PulsePurgeService {
                     })
                     .then()
             )
-            .doOnSuccess(v -> System.out.println("[PULSE PURGE] Complete! Active pulses expired and Day 2 view histories purged."))
+            .doOnSuccess(v -> System.out.println("[PULSE PURGE] Complete! Expired 24-hr pulse media purged."))
             .doOnError(e -> System.out.println("[PULSE PURGE] Error: " + e.getMessage()))
             .subscribe();
     }

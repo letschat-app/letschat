@@ -3,6 +3,7 @@ package com.letschat.mvp_1.Service;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,11 +23,15 @@ public class OtpService {
     private String appLogoUrl;
 
     private static final long OTP_VALIDITY_SECONDS = 600; // 10 minutes
+    private static final long RESET_TOKEN_VALIDITY_SECONDS = 900; // 15 minutes
     private final SecureRandom random = new SecureRandom();
 
     private final Map<String, OtpEntry> registrationOtpMap = new ConcurrentHashMap<>();
     private final Map<String, OtpEntry> forgotPasswordOtpMap = new ConcurrentHashMap<>();
+    private final Map<String, ResetTokenEntry> passwordResetTokenMap = new ConcurrentHashMap<>();
+    private final Map<String, OtpEntry> passwordChangeOtpMap = new ConcurrentHashMap<>();
     private final Map<String, OtpEntry> twoFactorOtpMap = new ConcurrentHashMap<>();
+    private final Map<String, OtpEntry> twoFactorConfigOtpMap = new ConcurrentHashMap<>();
 
     private String getLogoHtml() {
         if (appLogoUrl == null || appLogoUrl.trim().isEmpty()) {
@@ -50,6 +55,20 @@ public class OtpService {
 
         boolean isValid(String inputOtp) {
             return this.otp.equals(inputOtp) && Instant.now().isBefore(expiresAt);
+        }
+    }
+
+    private static class ResetTokenEntry {
+        final String token;
+        final Instant expiresAt;
+
+        ResetTokenEntry(String token, Instant expiresAt) {
+            this.token = token;
+            this.expiresAt = expiresAt;
+        }
+
+        boolean isValid(String inputToken) {
+            return this.token.equals(inputToken) && Instant.now().isBefore(expiresAt);
         }
     }
 
@@ -137,6 +156,30 @@ public class OtpService {
         OtpEntry entry = forgotPasswordOtpMap.get(cleanKey);
         if (entry != null && entry.isValid(inputOtp.trim())) {
             forgotPasswordOtpMap.remove(cleanKey);
+            return true;
+        }
+        return false;
+    }
+
+    public String verifyForgotPasswordOtpAndIssueToken(String identifier, String inputOtp) {
+        if (identifier == null || inputOtp == null) return null;
+        String cleanKey = identifier.trim().toLowerCase();
+        OtpEntry entry = forgotPasswordOtpMap.get(cleanKey);
+        if (entry != null && entry.isValid(inputOtp.trim())) {
+            forgotPasswordOtpMap.remove(cleanKey);
+            String token = UUID.randomUUID().toString();
+            passwordResetTokenMap.put(cleanKey, new ResetTokenEntry(token, Instant.now().plusSeconds(RESET_TOKEN_VALIDITY_SECONDS)));
+            return token;
+        }
+        return null;
+    }
+
+    public boolean verifyAndConsumeResetToken(String identifier, String inputToken) {
+        if (identifier == null || inputToken == null) return false;
+        String cleanKey = identifier.trim().toLowerCase();
+        ResetTokenEntry entry = passwordResetTokenMap.get(cleanKey);
+        if (entry != null && entry.isValid(inputToken.trim())) {
+            passwordResetTokenMap.remove(cleanKey);
             return true;
         }
         return false;
@@ -247,12 +290,104 @@ public class OtpService {
         return sendMail(cleanEmail, subject, html);
     }
 
+    public Mono<Boolean> sendPasswordChangeOtp(String userId, String targetEmail) {
+        if (targetEmail == null || targetEmail.trim().isEmpty()) {
+            return Mono.just(false);
+        }
+        String cleanKey = userId.trim().toLowerCase();
+        String otp = generate6DigitOtp();
+        passwordChangeOtpMap.put(cleanKey, new OtpEntry(otp, Instant.now().plusSeconds(OTP_VALIDITY_SECONDS)));
+
+        String logoHtml = getLogoHtml();
+        String subject = "LetsChat - Password Change Verification Code";
+        String html = """
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
+                <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                    %s
+                    <h2 style="color: #ea580c; text-align: center; margin: 0 0 8px 0; font-size: 22px;">Password Change Request</h2>
+                    <p style="text-align: center; color: #64748b; font-size: 14px; margin: 0 0 24px 0;">We received a request to change your LetsChat password. Because Two-Factor Authentication is enabled on your account, please enter this verification code to confirm:</p>
+                    <div style="text-align: center; margin: 24px 0;">
+                        <span style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #0f172a; background: #fff7ed; border: 1px solid #ffedd5; padding: 12px 28px; border-radius: 12px; display: inline-block;">%s</span>
+                    </div>
+                    <div style="text-align: center; margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">This code expires in 10 minutes. If you did not initiate this change, please contact support immediately.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """.formatted(logoHtml, otp);
+
+        return sendMail(targetEmail.trim().toLowerCase(), subject, html);
+    }
+
+    public boolean verifyPasswordChangeOtp(String userId, String inputOtp) {
+        if (userId == null || inputOtp == null) return false;
+        String cleanKey = userId.trim().toLowerCase();
+        OtpEntry entry = passwordChangeOtpMap.get(cleanKey);
+        if (entry != null && entry.isValid(inputOtp.trim())) {
+            passwordChangeOtpMap.remove(cleanKey);
+            return true;
+        }
+        return false;
+    }
+
+    public Mono<Boolean> send2FAConfigOtp(String userId, String targetEmail, boolean enable) {
+        if (targetEmail == null || targetEmail.trim().isEmpty()) {
+            return Mono.just(false);
+        }
+        String cleanKey = userId.trim().toLowerCase();
+        String otp = generate6DigitOtp();
+        twoFactorConfigOtpMap.put(cleanKey, new OtpEntry(otp, Instant.now().plusSeconds(OTP_VALIDITY_SECONDS)));
+
+        String actionText = enable ? "Enable" : "Disable";
+        String actionBadgeColor = enable ? "#059669" : "#dc2626";
+        String bgLight = enable ? "#ecfdf5" : "#fef2f2";
+        String borderLight = enable ? "#d1fae5" : "#fee2e2";
+
+        String logoHtml = getLogoHtml();
+        String subject = "LetsChat - 2FA Security Verification Code";
+        String html = """
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
+                <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                    %s
+                    <h2 style="color: %s; text-align: center; margin: 0 0 8px 0; font-size: 22px;">Confirm 2FA %s</h2>
+                    <p style="text-align: center; color: #64748b; font-size: 14px; margin: 0 0 24px 0;">You requested to <strong>%s</strong> Two-Factor Authentication on your LetsChat account. Use this 6-digit code to complete the verification:</p>
+                    <div style="text-align: center; margin: 24px 0;">
+                        <span style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #0f172a; background: %s; border: 1px solid %s; padding: 12px 28px; border-radius: 12px; display: inline-block;">%s</span>
+                    </div>
+                    <div style="text-align: center; margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">This code expires in 10 minutes. If you did not make this request, please change your password immediately.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """.formatted(logoHtml, actionBadgeColor, actionText, actionText.toLowerCase(), bgLight, borderLight, otp);
+
+        return sendMail(targetEmail.trim().toLowerCase(), subject, html);
+    }
+
+    public boolean verify2FAConfigOtp(String userId, String inputOtp) {
+        if (userId == null || inputOtp == null) return false;
+        String cleanKey = userId.trim().toLowerCase();
+        OtpEntry entry = twoFactorConfigOtpMap.get(cleanKey);
+        if (entry != null && entry.isValid(inputOtp.trim())) {
+            twoFactorConfigOtpMap.remove(cleanKey);
+            return true;
+        }
+        return false;
+    }
+
     @Scheduled(fixedRate = 10 * 60 * 1000)
     public void cleanExpiredOtps() {
         Instant now = Instant.now();
         registrationOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
         forgotPasswordOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
+        passwordResetTokenMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
+        passwordChangeOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
         twoFactorOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
+        twoFactorConfigOtpMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt));
     }
 
     private Mono<Boolean> sendMail(String toEmail, String subject, String htmlContent) {

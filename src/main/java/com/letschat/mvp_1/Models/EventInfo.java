@@ -21,8 +21,27 @@ public class EventInfo {
     private Boolean isAdded;
     private Boolean isSync;
 
+    // Enhanced Group & Meeting attributes
+    private String groupEventId;
+    private String creatorId;
+    private String scope = "ALL";
+    private Boolean isGroupVisible = true;
+    private String meetingType; // "online" or "offline"
+    private String meetingLink;
+    private String location;
+    private Boolean reminderEnabled = true;
+    private Integer reminderOffset = 60; // default 1 hour before
+    private String customReminderTime;
+    private String rsvpStatus; // "going", "not_going", "maybe"
+    private String externalBookerName;
+    private String externalBookerEmail;
+    private String externalStatus; // "pending", "approved", "declined"
+
     public EventInfo(){}
-    public EventInfo(Long eventId, String userId, String eventTitle,Instant startTime, Instant endTime, String eventDetails,String eventColor, String msgId, String chatId, String action, Boolean isAdded, Boolean isSync){
+
+    public EventInfo(Long eventId, String userId, String eventTitle, Instant startTime, Instant endTime, 
+                     String eventDetails, String eventColor, String msgId, String chatId, String action, 
+                     Boolean isAdded, Boolean isSync){
         this.eventId = eventId;
         this.userId = userId;
         this.eventTitle = eventTitle;
@@ -32,9 +51,9 @@ public class EventInfo {
         this.eventColor = eventColor;
         this.msgId = msgId;
         this.chatId = chatId;
-        this.action=action;
-        this.isAdded=isAdded;
-        this.isSync=isSync;
+        this.action = action;
+        this.isAdded = isAdded;
+        this.isSync = isSync;
     }
 
     public Long getEventId() {
@@ -104,20 +123,118 @@ public class EventInfo {
         return action;
     }
     public void setAction(String action){
-        this.action=action;
+        this.action = action;
     }
 
     public Boolean getIsAdded(){
         return isAdded;
     }
     public void setIsAdded(Boolean isAdded){
-        this.isAdded=isAdded;
+        this.isAdded = isAdded;
     }
 
     public Boolean getIsSync(){
         return isSync;
     }
     public void setIsSync(Boolean isSync){
-        this.isSync=isSync;
+        this.isSync = isSync;
+    }
+
+    public String getGroupEventId() {
+        return groupEventId;
+    }
+    public void setGroupEventId(String groupEventId) {
+        this.groupEventId = groupEventId;
+    }
+
+    public String getCreatorId() {
+        return creatorId;
+    }
+    public void setCreatorId(String creatorId) {
+        this.creatorId = creatorId;
+    }
+
+    public String getScope() {
+        return scope;
+    }
+    public void setScope(String scope) {
+        this.scope = scope;
+    }
+
+    public Boolean getIsGroupVisible() {
+        return isGroupVisible != null ? isGroupVisible : true;
+    }
+    public void setIsGroupVisible(Boolean isGroupVisible) {
+        this.isGroupVisible = isGroupVisible;
+    }
+
+    public String getMeetingType() {
+        return meetingType;
+    }
+    public void setMeetingType(String meetingType) {
+        this.meetingType = meetingType;
+    }
+
+    public String getMeetingLink() {
+        return meetingLink;
+    }
+    public void setMeetingLink(String meetingLink) {
+        this.meetingLink = meetingLink;
+    }
+
+    public String getLocation() {
+        return location;
+    }
+    public void setLocation(String location) {
+        this.location = location;
+    }
+
+    public Boolean getReminderEnabled() {
+        return reminderEnabled != null ? reminderEnabled : true;
+    }
+    public void setReminderEnabled(Boolean reminderEnabled) {
+        this.reminderEnabled = reminderEnabled;
+    }
+
+    public Integer getReminderOffset() {
+        return reminderOffset != null ? reminderOffset : 60;
+    }
+    public void setReminderOffset(Integer reminderOffset) {
+        this.reminderOffset = reminderOffset;
+    }
+
+    public String getCustomReminderTime() {
+        return customReminderTime;
+    }
+    public void setCustomReminderTime(String customReminderTime) {
+        this.customReminderTime = customReminderTime;
+    }
+
+    public String getRsvpStatus() {
+        return rsvpStatus;
+    }
+    public void setRsvpStatus(String rsvpStatus) {
+        this.rsvpStatus = rsvpStatus;
+    }
+
+    public String getExternalBookerName() {
+        return externalBookerName;
+    }
+    public void setExternalBookerName(String externalBookerName) {
+        this.externalBookerName = externalBookerName;
+    }
+
+    public String getExternalBookerEmail() {
+        return externalBookerEmail;
+    }
+    public void setExternalBookerEmail(String externalBookerEmail) {
+        this.externalBookerEmail = externalBookerEmail;
+    }
+
+    public String getExternalStatus() {
+        return externalStatus;
+    }
+    public void setExternalStatus(String externalStatus) {
+        this.externalStatus = externalStatus;
     }
 }

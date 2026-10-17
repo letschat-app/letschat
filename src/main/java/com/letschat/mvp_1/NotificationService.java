@@ -16,6 +16,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.*;
@@ -30,6 +31,7 @@ public class NotificationService {
     private final Map<String, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> eventDedup = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> muteCache = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler =
             Executors.newScheduledThreadPool(2);
@@ -118,24 +120,53 @@ public class NotificationService {
         if (f != null) f.cancel(false);
     }
 
+    // ================= MUTE HELPER =================
+    public void updateMuteCache(String userId, String chatId, boolean isMuted) {
+        muteCache.put(userId + ":" + chatId, isMuted);
+    }
+
+    public Mono<Boolean> isChatMuted(String userId, String chatId) {
+        String k = userId + ":" + chatId;
+        Boolean cached = muteCache.get(k);
+        if (cached != null) {
+            return Mono.just(cached);
+        }
+        return userChatInfoRepo.isChatMuted(chatId, userId)
+                .defaultIfEmpty(false)
+                .doOnNext(val -> muteCache.put(k, val));
+    }
+
     // ================= CHAT NOTIFY =================
-    // ✅ fully reactive — no collectList, no doOnNext for logic, no nested subscribe
     public Mono<Void> notifyUser(String userId, String chatId,
                                  String title, String msg, String type) {
+        return notifyUser(userId, chatId, title, msg, type, false, null);
+    }
 
-        return getTokens(userId)
-                .flatMap(token ->
-                        Mono.fromRunnable(() ->
-                                processChat(userId, chatId, title, msg, token)
-                        ).subscribeOn(Schedulers.boundedElastic())
-                )
-                .then();
+    public Mono<Void> notifyUser(String userId, String chatId,
+                                 String title, String msg, String type,
+                                 boolean isReplyToUser, String repliedTo) {
+
+        return isChatMuted(userId, chatId)
+                .flatMap(isMuted -> {
+                    if (Boolean.TRUE.equals(isMuted)) {
+                        if (!isReplyToUser) {
+                            // 🛑 STOPPED AT SERVER: Chat is globally muted for this user!
+                            return Mono.empty();
+                        }
+                        // ⚡ REPLY OVERRIDE: Muted, but direct reply to user!
+                        System.out.println("[CHAT NOTIFY] Reply override triggered for muted user " + userId + " in chat " + chatId);
+                    }
+
+                    return Mono.fromRunnable(() ->
+                            processChat(userId, chatId, title, msg, type, isReplyToUser, repliedTo)
+                    ).subscribeOn(Schedulers.boundedElastic()).then();
+                });
     }
 
     // ================= DEBOUNCE =================
-    // ✅ sendChat() called directly inside Mono.fromRunnable — no sendAsync, no nested subscribe
     private void processChat(String userId, String chatId,
-                              String title, String msg, String token) {
+                             String title, String msg, String type,
+                             boolean isReplyToUser, String repliedTo) {
 
         String k = chatKey(userId, chatId);
         ChatState state = addMessage(userId, chatId, msg);
@@ -143,13 +174,31 @@ public class NotificationService {
         ScheduledFuture<?> existing = timers.get(k);
         if (existing != null) existing.cancel(false);
 
+        // 30 seconds for room, 5 seconds for normal chats
+        long debounceSeconds = "room".equalsIgnoreCase(type) ? 30L : 5L;
+
         ScheduledFuture<?> future = scheduler.schedule(() -> {
 
-            sendChat(token, chatId, title, state.unread, state.messages, userId);
+            int unreadToSend;
+            List<String> msgsToSend;
+            synchronized (state) {
+                unreadToSend = state.unread;
+                msgsToSend = new ArrayList<>(state.messages);
+            }
+
+            getTokens(userId)
+                    .collectList()
+                    .subscribe(tokens -> {
+                        if (tokens != null && !tokens.isEmpty()) {
+                            for (String token : tokens) {
+                                sendChat(token, chatId, title, unreadToSend, msgsToSend, userId, type, repliedTo);
+                            }
+                        }
+                    });
 
             timers.remove(k);
 
-        }, 5, TimeUnit.SECONDS);
+        }, debounceSeconds, TimeUnit.SECONDS);
 
         timers.put(k, future);
     }
@@ -167,33 +216,63 @@ public class NotificationService {
     }
 
     // ================= EVENT REMINDER =================
-    // ✅ no collectList — streaming per event
-    // ✅ subscribe with full error handling
+    // ✅ runs every 10 minutes
+    // ✅ evaluates dynamic reminder_offset (60 min default, 120 min, 1 day, custom 15 min)
+    // ✅ filters out cancelled events and disabled reminders
     @Scheduled(fixedRate = 10 * 60 * 1000)
     public void checkUpcomingEvents() {
 
         Instant now = Instant.now();
-        Instant next = now.plus(1, ChronoUnit.HOURS);
+        Instant maxFuture = now.plus(25, ChronoUnit.HOURS); // covers up to 1-day reminders (24h)
 
-        eventInfoRepo.findEventsBetween(now, next)
+        eventInfoRepo.findEventsForReminderEvaluation(now, maxFuture)
+                .filter(event -> {
+                    if (event.getStartTime() == null) return false;
+                    if ("cancelled".equalsIgnoreCase(event.getAction())) return false;
+                    if (Boolean.FALSE.equals(event.getReminderEnabled())) return false;
+
+                    int offsetMins = event.getReminderOffset() != null ? event.getReminderOffset() : 60;
+                    Instant reminderTargetTime = event.getStartTime().minus(offsetMins, ChronoUnit.MINUTES);
+
+                    // Check if current scheduler run is within 10 minutes of the target reminder time
+                    long diffSeconds = ChronoUnit.SECONDS.between(now, reminderTargetTime);
+                    return diffSeconds >= -600 && diffSeconds <= 600;
+                })
                 .flatMap(event -> {
+                    int offset = event.getReminderOffset() != null ? event.getReminderOffset() : 60;
+                    String k = eventKey(event.getUserId(), event.getEventId(), offset + "M");
 
-                    String k = eventKey(event.getUserId(), event.getEventId(), "1H");
+                    if (!dedupCheck(k, 15 * 60 * 1000L)) return Mono.empty();
 
-                    if (!dedupCheck(k, 60 * 60 * 1000L)) return Mono.empty();
+                    String startTimeStr = event.getStartTime() != null ? event.getStartTime().toString() : "";
+                    String eventIdStr = String.valueOf(event.getEventId());
+                    String eventTitle = event.getEventTitle() != null ? event.getEventTitle() : "Upcoming Event";
+                    String eventChatId = event.getChatId() != null ? event.getChatId() : "";
 
-                    return getTokens(event.getUserId())
-                            .flatMap(token ->
-                                    Mono.fromRunnable(() ->
-                                            sendEvent(
-                                                    token,
-                                                    String.valueOf(event.getEventId()),
-                                                    event.getEventTitle(),
-                                                    event.getChatId(),
-                                                    event.getUserId()
-                                            )
-                                    ).subscribeOn(Schedulers.boundedElastic())
-                            );
+                    Mono<String> chatNameMono = (eventChatId != null && !eventChatId.isEmpty() && !"0".equals(eventChatId))
+                            ? userChatInfoRepo.findChatNameByChatId(eventChatId).defaultIfEmpty("LetsChat Event")
+                            : Mono.just("LetsChat Event");
+
+                    return chatNameMono.flatMap(chatName ->
+                            getTokens(event.getUserId())
+                                    .flatMap(token ->
+                                            Mono.fromRunnable(() ->
+                                                    sendEvent(
+                                                            token,
+                                                            eventIdStr,
+                                                            eventTitle,
+                                                            eventChatId,
+                                                            event.getUserId(),
+                                                            startTimeStr,
+                                                            chatName,
+                                                            event.getMeetingType(),
+                                                            event.getMeetingLink(),
+                                                            event.getLocation()
+                                                    )
+                                            ).subscribeOn(Schedulers.boundedElastic())
+                                    )
+                                    .then()
+                    );
                 })
                 .doOnError(e -> System.out.println("[EVENT REMINDER] error: " + e))
                 .onErrorResume(e -> Flux.empty())
@@ -204,14 +283,16 @@ public class NotificationService {
                 );
     }
 
-    // ================= DAILY 6AM =================
+    // ================= DAILY 7AM IST =================
     // ✅ groupBy instead of collectMultimap — no full table in memory
-    // ✅ subscribe with full error handling
-    @Scheduled(cron = "0 15 8 * * *")
+    // ✅ runs at 7:00 AM Indian Standard Time (Asia/Kolkata)
+    @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Kolkata")
     public void dailySummary() {
 
-        Instant start = Instant.now().truncatedTo(ChronoUnit.DAYS);
-        Instant end = start.plus(1, ChronoUnit.DAYS);
+        ZoneId istZone = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(istZone);
+        Instant start = today.atStartOfDay(istZone).toInstant();
+        Instant end = today.plusDays(1).atStartOfDay(istZone).toInstant();
 
         eventInfoRepo.findTodayEvents(start, end)
                 .groupBy(e -> e.getUserId())
@@ -220,7 +301,7 @@ public class NotificationService {
                         .collectList()
                         .flatMap(titles -> {
                             String userId = group.key();
-                            String k = userId + ":daily:" + LocalDate.now();
+                            String k = userId + ":daily:" + today;
 
                             if (!dedupCheck(k, 24 * 60 * 60 * 1000L))
                                 return Mono.empty();
@@ -243,41 +324,46 @@ public class NotificationService {
                 );
     }
 
-   @Scheduled(cron = "0 0 8 * * *")
-public void assignmentMissingSummary() {
+    // ================= ASSIGNMENT MISSING 7AM IST =================
+    // ✅ runs at 7:00 AM Indian Standard Time (Asia/Kolkata)
+    @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Kolkata")
+    public void assignmentMissingSummary() {
 
-    assignmentRepo.findMissingAssignments()
-            .flatMap(dto -> {
+        ZoneId istZone = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(istZone);
 
-                if (dto.getAssignmentIds() == null || dto.getAssignmentIds().isEmpty()) {
-                    return Mono.empty();
-                }
+        assignmentRepo.findMissingAssignments()
+                .flatMap(dto -> {
 
-                String k = dto.getUserId() + ":assignment:" + LocalDate.now();
+                    if (dto.getAssignmentIds() == null || dto.getAssignmentIds().isEmpty()) {
+                        return Mono.empty();
+                    }
 
-                if (!dedupCheck(k, 24 * 60 * 60 * 1000L)) {
-                    return Mono.empty();
-                }
+                    String k = dto.getUserId() + ":assignment:" + today;
 
-                return getTokens(dto.getUserId())
-                        .flatMap(token ->
-                                Mono.fromRunnable(() ->
-                                        sendAssignmentNotification(
-                                                token,
-                                                dto.getUserId(),
-                                                dto.getAssignmentIds()
-                                        )
-                                ).subscribeOn(Schedulers.boundedElastic())
-                        )
-                        .then();
-            })
-            .doOnError(e -> System.out.println("[ASSIGNMENT SUMMARY] error: " + e))
-            .onErrorResume(e -> Flux.empty())
-            .subscribe();
-}
+                    if (!dedupCheck(k, 24 * 60 * 60 * 1000L)) {
+                        return Mono.empty();
+                    }
 
-    // ================= TOKEN SYNC (every 2 days) =================
-    @Scheduled(cron = "0 0 0 */2 * *")
+                    return getTokens(dto.getUserId())
+                            .flatMap(token ->
+                                    Mono.fromRunnable(() ->
+                                            sendAssignmentNotification(
+                                                    token,
+                                                    dto.getUserId(),
+                                                    dto.getAssignmentIds()
+                                            )
+                                    ).subscribeOn(Schedulers.boundedElastic())
+                            )
+                            .then();
+                })
+                .doOnError(e -> System.out.println("[ASSIGNMENT SUMMARY] error: " + e))
+                .onErrorResume(e -> Flux.empty())
+                .subscribe();
+    }
+
+    // ================= TOKEN SYNC (every 7 days at midnight) =================
+    @Scheduled(cron = "0 0 0 */7 * *", zone = "Asia/Kolkata")
     public void syncTokens() {
 
         fcmRepo.getAllUsersWithTokens()
@@ -346,19 +432,22 @@ public void assignmentMissingSummary() {
 
     // ================= FIREBASE SENDS =================
     private void sendChat(String token, String chatId, String title,
-                          int unread, List<String> msgs, String userId) {
+                          int unread, List<String> msgs, String userId,
+                          String chatType, String repliedTo) {
         try {
             Map<String, String> data = new HashMap<>();
             data.put("type", "CHAT");
             data.put("chatId", chatId);
             data.put("title", title);
-            data.put("unread", String.valueOf(unread));
+            data.put("unread", "room".equalsIgnoreCase(chatType) ? "1" : String.valueOf(unread));
             data.put("msgs", objectMapper.writeValueAsString(msgs));
+            if (chatType != null) data.put("chatType", chatType);
+            if (repliedTo != null && !repliedTo.isEmpty()) data.put("repliedTo", repliedTo);
 
             FirebaseMessaging.getInstance()
                     .send(Message.builder().putAllData(data).setToken(token).build());
 
-            System.out.println("[CHAT] sent to " + userId);
+            System.out.println("[CHAT] sent to " + userId + " (type=" + chatType + ")");
 
         } catch (Exception e) {
             System.out.println("[CHAT] error: " + e);
@@ -366,18 +455,29 @@ public void assignmentMissingSummary() {
     }
 
     private void sendEvent(String token, String eventId, String title,
-                           String chatId, String userId) {
+                           String chatId, String userId, String startTime, String chatName) {
+        sendEvent(token, eventId, title, chatId, userId, startTime, chatName, null, null, null);
+    }
+
+    private void sendEvent(String token, String eventId, String title,
+                           String chatId, String userId, String startTime, String chatName,
+                           String meetingType, String meetingLink, String location) {
         try {
             Map<String, String> data = new HashMap<>();
             data.put("type", "EVENT");
-            data.put("eventId", eventId);
-            data.put("title", title);
-            data.put("chatId", chatId);
+            data.put("eventId", eventId != null ? eventId : "");
+            data.put("title", title != null ? title : "Upcoming Event");
+            data.put("chatId", chatId != null ? chatId : "");
+            data.put("chatName", chatName != null ? chatName : "LetsChat Event");
+            data.put("startTime", startTime != null ? startTime : "");
+            data.put("meetingType", meetingType != null ? meetingType : "");
+            data.put("meetingLink", meetingLink != null ? meetingLink : "");
+            data.put("location", location != null ? location : "");
 
             FirebaseMessaging.getInstance()
                     .send(Message.builder().putAllData(data).setToken(token).build());
 
-            System.out.println("[EVENT] sent to " + userId);
+            System.out.println("[EVENT] sent to " + userId + " for " + chatName);
 
         } catch (Exception e) {
             System.out.println("[EVENT] error: " + e);

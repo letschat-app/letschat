@@ -29,4 +29,12 @@ public class MissingAssignmentDTO {
     public void setAssignmentIds(List<Long> assignmentIds) {
         this.assignmentIds = assignmentIds;
     }
+
+    public void setMissingAssignmentIds(List<Long> assignmentIds) {
+        this.assignmentIds = assignmentIds;
+    }
+
+    public void setMissing_assignment_ids(List<Long> assignmentIds) {
+        this.assignmentIds = assignmentIds;
+    }
 }

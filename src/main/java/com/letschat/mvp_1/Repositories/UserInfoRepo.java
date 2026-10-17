@@ -1,5 +1,6 @@
 package com.letschat.mvp_1.Repositories;
 
+import org.springframework.data.r2dbc.repository.Modifying;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 
@@ -120,4 +121,11 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
             ) AS candidate_names
             """)
         Flux<String> findSimilarCandidates(String prefix1, String prefix2, int minLen, int maxLen, String excludeUserId);
+
+    @Query("SELECT * FROM \"UserInfo\" WHERE \"BookingSlug\" = :slug OR \"UserId\" = :slug OR \"PublicName\" = :slug LIMIT 1")
+    Mono<UserInfo> findByBookingSlugOrUser(String slug);
+
+    @Modifying
+    @Query("UPDATE \"UserInfo\" SET \"ShowBusySlotsExternal\" = :showBusySlots WHERE \"UserId\" = :userId")
+    Mono<Integer> updateShowBusySlots(String userId, Boolean showBusySlots);
 }

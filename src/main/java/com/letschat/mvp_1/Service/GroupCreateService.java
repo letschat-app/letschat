@@ -49,9 +49,62 @@ public class GroupCreateService {
         .switchIfEmpty(Mono.just("failed"));
     }
 
-    public Mono<String> updategroup(String GroupId,ChatBoxReturnDTO info){
-        return groupInfoRepo.update(info.getChatName(), info.getProfile(), GroupId)
-        .flatMap(info1->Mono.just("updated"));
+    public Mono<String> updategroup(String GroupId, ChatBoxReturnDTO info) {
+        return updategroup(GroupId, info, null, null);
+    }
+
+    public Mono<String> updategroup(String GroupId, ChatBoxReturnDTO info, String adminName, String adminId) {
+        return groupInfoRepo.findByGroupId(GroupId)
+            .flatMap(oldGroup -> {
+                return userChatInfoRepo.findByChatId(oldGroup.getChatId())
+                    .flatMap(chat -> {
+                        String chatId = chat.getChatId();
+
+                        String effectiveAdminId = (adminId != null && !adminId.trim().isEmpty())
+                            ? adminId.trim()
+                            : (oldGroup.getCreatedBy() != null ? oldGroup.getCreatedBy() : "admin");
+
+                        Mono<String> resolveAdminName = (adminName != null && !adminName.trim().isEmpty())
+                            ? Mono.just(adminName.trim())
+                            : (effectiveAdminId != null
+                                ? userChatInfoRepo.getUsername(chatId, effectiveAdminId)
+                                    .switchIfEmpty(userInfoRepo.findByUserId(effectiveAdminId).map(u -> u.getPublicName()))
+                                    .defaultIfEmpty("Admin")
+                                : Mono.just("Admin"));
+
+                        String newName = (info.getChatName() != null && !info.getChatName().trim().isEmpty()) ? info.getChatName().trim() : null;
+                        String newProfile = (info.getProfile() != null && !info.getProfile().trim().isEmpty()) ? info.getProfile().trim() : null;
+                        String newMotto = (info.getMotto() != null && !info.getMotto().trim().isEmpty()) ? info.getMotto().trim() : null;
+
+                        boolean nameChanged = newName != null && !newName.equals(oldGroup.getGroupName());
+                        boolean profileChanged = newProfile != null && !newProfile.equals(oldGroup.getGroupProfilePath());
+                        boolean mottoChanged = newMotto != null && !newMotto.equals(oldGroup.getMotto());
+
+                        return groupInfoRepo.updateWithMotto(newName, newProfile, newMotto, GroupId)
+                            .flatMap(updatedGroup -> resolveAdminName.flatMap(effectiveAdminName -> {
+                                Mono<Void> announceChain = Mono.empty();
+
+                                if (nameChanged) {
+                                    announceChain = announceChain.then(
+                                        myWebSocketHandler.announce(chatId, "group_name", newName, effectiveAdminName, effectiveAdminId)
+                                    );
+                                }
+                                if (profileChanged) {
+                                    announceChain = announceChain.then(
+                                        myWebSocketHandler.announce(chatId, "group_profile", "", effectiveAdminName, effectiveAdminId)
+                                    );
+                                }
+                                if (mottoChanged) {
+                                    announceChain = announceChain.then(
+                                        myWebSocketHandler.announce(chatId, "group_description", "", effectiveAdminName, effectiveAdminId)
+                                    );
+                                }
+
+                                return announceChain.thenReturn("updated");
+                            }));
+                    });
+            })
+            .switchIfEmpty(Mono.just("error"));
     }
 
     public Mono<String> generateGroupIdId(){

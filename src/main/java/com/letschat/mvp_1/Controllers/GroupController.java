@@ -61,8 +61,12 @@ public class GroupController {
     }
 
     @PostMapping("update/{Groupid}")
-    public Mono<ResponseEntity<String>> update(@PathVariable String Groupid,@RequestBody ChatBoxReturnDTO info){
-        return groupCreateService.updategroup(Groupid, info)
+    public Mono<ResponseEntity<String>> update(
+            @PathVariable String Groupid,
+            @RequestBody ChatBoxReturnDTO info,
+            @RequestHeader(value = "User-Name", required = false) String Admin,
+            @RequestHeader(value = "User-Id", required = false) String AdminId) {
+        return groupCreateService.updategroup(Groupid, info, Admin, AdminId)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("error")));
     }

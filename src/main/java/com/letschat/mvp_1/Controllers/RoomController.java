@@ -34,12 +34,25 @@ public class RoomController {
     }
 
     @PostMapping("/create")
-    public Mono<RoomInfo> createRoom(@RequestBody Map<String,String> body){
+    public Mono<ResponseEntity<Object>> createRoom(@RequestBody Map<String,String> body){
         return roomService.createRoom(
             body.get("userId"),
             body.get("roomName"),
             body.get("motto")
+        )
+        .map(room -> ResponseEntity.status(201).body((Object) room))
+        .onErrorResume(org.springframework.web.server.ResponseStatusException.class, ex ->
+            Mono.just(ResponseEntity.status(ex.getStatusCode()).body((Object) Map.of(
+                "status", "error",
+                "message", ex.getReason() != null ? ex.getReason() : "Failed to create room"
+            )))
         );
+    }
+
+    @GetMapping("/check-name")
+    public Mono<ResponseEntity<Map<String, Object>>> checkRoomName(@RequestParam String roomName) {
+        return roomService.checkRoomNameAvailability(roomName)
+            .map(ResponseEntity::ok);
     }
 
     @PostMapping("/join")

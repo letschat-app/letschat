@@ -2,10 +2,12 @@ package com.letschat.mvp_1.Repositories;
 
 import java.time.LocalDateTime;
 
+import org.springframework.data.r2dbc.repository.Modifying;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
 
 import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
+import com.letschat.mvp_1.DTOs.SenderInfoDTO;
 import com.letschat.mvp_1.Models.UserChatInfo;
 
 import reactor.core.publisher.Flux;
@@ -19,26 +21,28 @@ public interface UserChatInfoRepo extends ReactiveCrudRepository<UserChatInfo, L
     @Query("select * from \"UserChat\" order by \"ChatId\" desc limit 1")
     Mono<UserChatInfo> findlastuser();
 
-    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile) returning *")
+    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\",\"IsMuted\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile, false) returning *")
     Mono<UserChatInfo> insert(String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile);
+
+    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\",\"IsMuted\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile, COALESCE(:IsMuted, false)) returning *")
+    Mono<UserChatInfo> insertWithMute(String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile,Boolean IsMuted);
 
     @Query("select * from \"UserChat\" where \"UserId\"=:UserId and (\"ChatName\"=:UserName1 or \"ChatName\"=:UserName2) limit 1")
     Mono<UserChatInfo> findIfExist(String UserId,String UserName1,String UserName2);
 
     @Query("""
-            select uc1."ChatId" as ChatId,ui."UserId" as Id,uc1."ChatName" as ChatName,uc1."Type" as Type,uc1."Status" as Status,uc1."At" as timestamp,uc1."ChatProfile" as "Profile" from "UserChat" uc1 join "UserChat" uc2 on uc1."ChatId"=uc2."ChatId"
+            select uc1."ChatId" as ChatId,ui."UserId" as Id,uc1."ChatName" as ChatName,uc1."Type" as Type,uc1."Status" as Status,uc1."At" as timestamp,uc1."ChatProfile" as "Profile", COALESCE(uc1."IsMuted", false) as isMuted from "UserChat" uc1 join "UserChat" uc2 on uc1."ChatId"=uc2."ChatId"
 join "UserInfo" ui on ui."UserId"=uc2."UserId" where uc1."UserId"=:UserId and uc2."UserId"!=:UserId and uc1."Type"='private'
             """)
     Flux<ChatBoxReturnDTO> findUserChat(String UserId);
 
     @Query("""
-
-select user_chats."ChatId" as ChatId,gi."GroupId" as Id,gi."GroupName" as ChatName,gi."GroupProfilePath" as "Profile",user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role from (select "ChatId","Type","At","Role","Status" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
+select user_chats."ChatId" as ChatId,gi."GroupId" as Id,gi."GroupName" as ChatName,gi."GroupProfilePath" as "Profile",user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role, COALESCE(user_chats."IsMuted", false) as isMuted from (select "ChatId","Type","At","Role","Status","IsMuted" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
 As chat_min_ids on user_chats."ChatId"=chat_min_ids."ChatId" join "GroupInfo" gi on gi."ChatId"=chat_min_ids.min_id            """)
     Flux<ChatBoxReturnDTO> findGroupChat(String UserId);
 
     @Query("""
-select user_chats."ChatId" as ChatId,gi."room_id" as Id,gi."room_name" as ChatName,gi."room_profile" as "Profile",user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role from (select "ChatId","Type","At","Role","Status" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
+select user_chats."ChatId" as ChatId,gi."room_id" as Id,gi."room_name" as ChatName,gi."room_profile" as "Profile",user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role, COALESCE(user_chats."IsMuted", false) as isMuted from (select "ChatId","Type","At","Role","Status","IsMuted" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
 As chat_min_ids on user_chats."ChatId"=chat_min_ids."ChatId" join "ClassRoomInfo" gi on gi."chat_id"=chat_min_ids.min_id           
             """)
             Flux<ChatBoxReturnDTO> findClassRoomChat(String UserId);
@@ -115,4 +119,41 @@ group by "ChatId" having count(distinct "UserId")=2
                 WHERE "ChatId" = :chatId AND "Status" = 'allowed' AND ("Role" != 'faculty' OR "Role" IS NULL)
                 """)
         Flux<UserChatInfo> findClassroomStudents(String chatId);
+
+        @Modifying
+        @Query("""
+                UPDATE "UserChat" 
+                SET "IsMuted" = :isMuted 
+                WHERE "ChatId" = :chatId AND "UserId" = :userId
+                """)
+        Mono<Integer> updateMuteStatus(String chatId, String userId, Boolean isMuted);
+
+        @Query("""
+                SELECT COALESCE("IsMuted", false) 
+                FROM "UserChat" 
+                WHERE "ChatId" = :chatId AND "UserId" = :userId 
+                LIMIT 1
+                """)
+        Mono<Boolean> isChatMuted(String chatId, String userId);
+
+        @Query("""
+                SELECT 
+                    mi."SenderId" AS sender_id,
+                    COALESCE(
+                        (
+                            SELECT uc2."UserName"
+                            FROM "UserChat" uc1
+                            JOIN "UserChat" uc2 
+                              ON uc2."ChatId" = uc1."ChatId" 
+                             AND uc2."UserId" = mi."SenderId"
+                            WHERE uc1."Id" = mi."ChatId"
+                            LIMIT 1
+                        ),
+                        'Member'
+                    ) AS sender_name
+                FROM "MessageInfo" mi
+                WHERE mi."MessageId" = :msgId
+                LIMIT 1
+                """)
+        Mono<SenderInfoDTO> findSenderInChat(String msgId);
 }
