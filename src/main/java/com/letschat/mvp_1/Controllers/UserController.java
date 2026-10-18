@@ -293,12 +293,14 @@ public class UserController {
     }
     
 
-    @GetMapping("/check-username")
+    @GetMapping({"/check-username", "/check-name"})
     @Operation(summary = "Check Username Availability & Similarity", description = "Verifies username availability and evaluates similarity against existing usernames across UserInfo and UserChat.")
     public Mono<ResponseEntity<com.letschat.mvp_1.DTOs.UsernameCheckResultDTO>> checkUsername(
-            @RequestParam String username,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String name,
             @RequestParam(required = false) String excludeUserId) {
-        return usernameValidationService.checkUsername(username, excludeUserId)
+        String target = (username != null && !username.trim().isEmpty()) ? username : name;
+        return usernameValidationService.checkUsername(target, excludeUserId)
                 .map(ResponseEntity::ok);
     }
 

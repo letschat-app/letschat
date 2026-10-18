@@ -4,12 +4,70 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class UsernameSimilarityEvaluator {
 
     public static final double FLOOR = 0.50;
     public static final double BLOCK_THRESHOLD = 8.0;
     public static final double WARN_THRESHOLD = 6.0;
+
+    private static final Set<String> RESERVED_KEYWORDS = Set.of(
+        "letschat",
+        "admin",
+        "administrator",
+        "system",
+        "sysadmin",
+        "server",
+        "root",
+        "support",
+        "helpdesk",
+        "moderator",
+        "official",
+        "security",
+        "bot"
+    );
+
+    /**
+     * Checks if a name contains or mimics reserved system / admin names
+     * such as letschat, admin, system, server, etc.
+     */
+    public static boolean isReserved(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return false;
+        }
+
+        String rawLower = name.trim().toLowerCase();
+        String norm = normalize(name);
+
+        // 1. Direct contains for primary brand name
+        if (norm.contains("letschat")) {
+            return true;
+        }
+
+        // 2. Exact match against reserved set
+        if (RESERVED_KEYWORDS.contains(norm) || RESERVED_KEYWORDS.contains(rawLower)) {
+            return true;
+        }
+
+        // 3. Strip trailing numbers (e.g. admin123, system01, server99)
+        String noDigits = norm.replaceAll("\\d+$", "");
+        if (!noDigits.isEmpty() && RESERVED_KEYWORDS.contains(noDigits)) {
+            return true;
+        }
+
+        // 4. Token-based check (splitting on non-alphanumeric delimiters like _, ., -, space)
+        String[] tokens = rawLower.split("[^a-z0-9]+");
+        for (String token : tokens) {
+            String normToken = normalize(token);
+            String normTokenNoDigits = normToken.replaceAll("\\d+$", "");
+            if (RESERVED_KEYWORDS.contains(normToken) || (!normTokenNoDigits.isEmpty() && RESERVED_KEYWORDS.contains(normTokenNoDigits))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /**
      * STEP 1: Normalize

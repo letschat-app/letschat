@@ -57,4 +57,10 @@ public interface PulseInfoRepo extends ReactiveCrudRepository<PulseInfo, Long> {
             WHERE "status" = 'expired' AND "created_at" < :cutoff
             """)
     Flux<PulseInfo> findExpiredPulsesOlderThan(LocalDateTime cutoff);
+
+    @Query("""
+            SELECT COUNT(*) FROM "PulseInfo" 
+            WHERE "status" = 'active' AND "expires_at" > :now
+            """)
+    Mono<Long> countActivePulses(LocalDateTime now);
 }

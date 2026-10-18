@@ -29,6 +29,15 @@ public class UsernameValidationService {
         String rawClean = username.trim();
         String normInput = UsernameSimilarityEvaluator.normalize(rawClean);
 
+        if (UsernameSimilarityEvaluator.isReserved(rawClean)) {
+            return Mono.just(new UsernameCheckResultDTO(
+                rawClean,
+                10.0,
+                "BLOCK",
+                "Username already taken"
+            ));
+        }
+
         if (normInput.length() < 2) {
             return Mono.just(new UsernameCheckResultDTO(
                 rawClean,

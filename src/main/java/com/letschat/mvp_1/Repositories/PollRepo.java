@@ -24,4 +24,7 @@ public interface PollRepo extends ReactiveCrudRepository<Poll, Long> {
     @Modifying
     @Query("DELETE FROM polls WHERE msg_id IS NULL AND created_at < :cutoff")
     Mono<Integer> deleteUnlinkedPolls(LocalDateTime cutoff);
+
+    @Query("SELECT COUNT(*) FROM polls WHERE (expires_at IS NULL OR expires_at > :now) AND msg_id IS NOT NULL")
+    Mono<Long> countActivePolls(LocalDateTime now);
 }

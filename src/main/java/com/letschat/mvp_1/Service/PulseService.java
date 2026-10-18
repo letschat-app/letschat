@@ -74,28 +74,69 @@ public class PulseService {
             PulseUploadUrlResponse response = new PulseUploadUrlResponse();
 
             if (request.isNeedsImage()) {
-                String key = "temp/pulses/images/" + UUID.randomUUID() + (request.getImageMime() != null && request.getImageMime().contains("png") ? ".png" : ".jpg");
-                String putUrl = createPresignedPutUrl(key, request.getImageMime() != null ? request.getImageMime() : "image/jpeg");
+                String mime = (request.getImageMime() != null && !request.getImageMime().isBlank())
+                        ? request.getImageMime().trim()
+                        : "image/webp";
+                String ext = resolveExtension(mime, ".webp");
+                String key = "temp/pulses/images/" + UUID.randomUUID() + ext;
+                String putUrl = createPresignedPutUrl(key, mime);
                 response.setImageFileKey(key);
                 response.setImagePutUrl(putUrl);
             }
 
             if (request.isNeedsAudio()) {
-                String key = "temp/pulses/audios/" + UUID.randomUUID() + ".mp3";
-                String putUrl = createPresignedPutUrl(key, request.getAudioMime() != null ? request.getAudioMime() : "audio/mp3");
+                String mime = (request.getAudioMime() != null && !request.getAudioMime().isBlank())
+                        ? request.getAudioMime().trim()
+                        : "audio/mp3";
+                String ext = resolveExtension(mime, ".mp3");
+                String key = "temp/pulses/audios/" + UUID.randomUUID() + ext;
+                String putUrl = createPresignedPutUrl(key, mime);
                 response.setAudioFileKey(key);
                 response.setAudioPutUrl(putUrl);
             }
 
             if (request.isNeedsVideo()) {
-                String key = "temp/pulses/videos/" + UUID.randomUUID() + ".mp4";
-                String putUrl = createPresignedPutUrl(key, request.getVideoMime() != null ? request.getVideoMime() : "video/mp4");
+                String mime = (request.getVideoMime() != null && !request.getVideoMime().isBlank())
+                        ? request.getVideoMime().trim()
+                        : "video/mp4";
+                String ext = resolveExtension(mime, ".mp4");
+                String key = "temp/pulses/videos/" + UUID.randomUUID() + ext;
+                String putUrl = createPresignedPutUrl(key, mime);
                 response.setVideoFileKey(key);
                 response.setVideoPutUrl(putUrl);
             }
 
             return response;
         });
+    }
+
+    private String resolveExtension(String mime, String fallbackExt) {
+        if (mime == null || mime.isBlank()) return fallbackExt;
+        String clean = mime.toLowerCase().trim();
+        switch (clean) {
+            case "image/webp": return ".webp";
+            case "image/jpeg":
+            case "image/jpg":  return ".jpg";
+            case "image/png":  return ".png";
+            case "image/gif":  return ".gif";
+            case "image/svg+xml": return ".svg";
+            case "audio/mpeg":
+            case "audio/mp3":  return ".mp3";
+            case "audio/webm": return ".webm";
+            case "audio/ogg":  return ".ogg";
+            case "audio/wav":  return ".wav";
+            case "video/mp4":  return ".mp4";
+            case "video/webm": return ".webm";
+            case "video/quicktime": return ".mov";
+            default:
+                if (clean.contains("/")) {
+                    String sub = clean.substring(clean.indexOf("/") + 1).split(";")[0].trim();
+                    if (!sub.isEmpty() && sub.length() <= 5) {
+                        return "." + sub;
+                    }
+                }
+                return fallbackExt;
+        }
     }
 
     private String createPresignedPutUrl(String key, String contentType) {
@@ -249,16 +290,13 @@ public class PulseService {
         return userChatInfoRepo.findContactUserIds(viewerUserId)
                 .collectList()
                 .flatMap(contactIds -> {
-                    if (contactIds.isEmpty()) {
-                        PulseFeedResponseDTO empty = new PulseFeedResponseDTO();
-                        empty.setViewerUserId(viewerUserId);
-                        empty.setContactsCount(0);
-                        empty.setFeed(List.of());
-                        return Mono.just(empty);
+                    List<String> queryIds = new ArrayList<>(contactIds);
+                    if (!queryIds.contains("SYSTEM_ADMIN")) {
+                        queryIds.add("SYSTEM_ADMIN");
                     }
 
                     LocalDateTime now = LocalDateTime.now();
-                    return pulseInfoRepo.findActiveContactsPulses(contactIds, now)
+                    return pulseInfoRepo.findActiveContactsPulses(queryIds, now)
                             .flatMap(pulse -> {
                                 PulseFeedItemDTO item = new PulseFeedItemDTO();
                                 item.setPulseId(pulse.getPulseId());

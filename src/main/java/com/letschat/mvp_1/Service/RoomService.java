@@ -53,6 +53,9 @@ public class RoomService {
     }
 
     public Mono<String> createRoomNickname(String name,String userid){
+        if (UsernameSimilarityEvaluator.isReserved(name)) {
+            return Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "Nickname already taken"));
+        }
         return userInfoRepo.setroomname(name,userid)
         .flatMap(user->Mono.just("success"));
     }
@@ -74,6 +77,15 @@ public class RoomService {
             ));
         }
         String normalized = normalizeRoomName(roomName);
+
+        if (UsernameSimilarityEvaluator.isReserved(roomName)) {
+            return Mono.just(Map.of(
+                "available", false,
+                "normalized", normalized,
+                "message", "Room name already exists"
+            ));
+        }
+
         return roomInfoRepo.existsByNormalizedName(normalized)
             .map(exists -> {
                 if (Boolean.TRUE.equals(exists)) {
@@ -97,6 +109,9 @@ public class RoomService {
             return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Room name cannot be empty"));
         }
         String cleanRoomName = roomName.trim().replaceAll("\\s+", " ");
+        if (UsernameSimilarityEvaluator.isReserved(roomName)) {
+            return Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "Room name '" + cleanRoomName + "' already exists"));
+        }
         String normalized = normalizeRoomName(roomName);
 
         return roomInfoRepo.existsByNormalizedName(normalized)

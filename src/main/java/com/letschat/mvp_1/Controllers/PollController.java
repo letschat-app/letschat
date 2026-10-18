@@ -25,11 +25,17 @@ public class PollController {
 
     @Operation(summary = "Create Native Poll", description = "Step 1 of decoupled poll creation. Returns a pollId to link with WebSocket message.")
     @PostMapping
-    public Mono<ResponseEntity<Object>> createPoll(@RequestBody CreatePollRequestDTO dto, Principal principal) {
-        String userId = (principal != null) ? principal.getName() : null;
+    public Mono<ResponseEntity<Object>> createPoll(
+            @RequestBody CreatePollRequestDTO dto,
+            @RequestHeader(value = "User-Id", required = false) String headerUserId,
+            @RequestHeader(value = "user-id", required = false) String lowerHeaderUserId,
+            Principal principal) {
+        String userId = (principal != null && principal.getName() != null) 
+                ? principal.getName() 
+                : (headerUserId != null && !headerUserId.isBlank() ? headerUserId : lowerHeaderUserId);
 
         if (userId == null || userId.isBlank()) {
-            return Mono.just(ResponseEntity.status(401).body("Unauthorized"));
+            return Mono.just(ResponseEntity.status(401).body((Object) "Unauthorized: Missing User-Id header"));
         }
 
         return pollService.createPoll(userId, dto)

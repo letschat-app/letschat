@@ -78,6 +78,11 @@ public class MyWebSocketHandler implements WebSocketHandler{
     private final ConcurrentHashMap<String, Long> chatLastAccessed = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> msgSenderCache = new ConcurrentHashMap<>();
   //  private final Map<String, Set<String>> tokenCache = new ConcurrentHashMap<>();
+
+    public int getConnectedWebSocketsCount() {
+        return usersink.size();
+    }
+
     @Override
     public Mono<Void> handle(WebSocketSession session){
         String sessionid = session.getId();

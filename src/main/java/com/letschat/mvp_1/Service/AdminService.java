@@ -1,22 +1,43 @@
 package com.letschat.mvp_1.Service;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.letschat.mvp_1.Repositories.MessageInfoRepo;
+import com.letschat.mvp_1.Repositories.PollRepo;
+import com.letschat.mvp_1.Repositories.PulseInfoRepo;
+import com.letschat.mvp_1.Repositories.UserInfoRepo;
+import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
 import reactor.core.publisher.Mono;
 
 @Component
 public class AdminService {
     private final MessageInfoRepo messageInfoRepo;
-    public AdminService(MessageInfoRepo messageInfoRepo){
-        this.messageInfoRepo=messageInfoRepo;
+    private final UserInfoRepo userInfoRepo;
+    private final PulseInfoRepo pulseInfoRepo;
+    private final PollRepo pollRepo;
+    private final ObjectProvider<MyWebSocketHandler> webSocketHandlerProvider;
+
+    public AdminService(
+        MessageInfoRepo messageInfoRepo,
+        UserInfoRepo userInfoRepo,
+        PulseInfoRepo pulseInfoRepo,
+        PollRepo pollRepo,
+        ObjectProvider<MyWebSocketHandler> webSocketHandlerProvider
+    ){
+        this.messageInfoRepo = messageInfoRepo;
+        this.userInfoRepo = userInfoRepo;
+        this.pulseInfoRepo = pulseInfoRepo;
+        this.pollRepo = pollRepo;
+        this.webSocketHandlerProvider = webSocketHandlerProvider;
     }
 
     // ===== USER SIGNALS =====
@@ -167,5 +188,36 @@ public class AdminService {
             "multiSpacePercent", 0.0,
             "customSpacePercent", 0.0
         ));
+    }
+
+    public Mono<Map<String, Object>> getDashboardMetrics() {
+        LocalDateTime now = LocalDateTime.now();
+        int connectedSockets;
+        try {
+            MyWebSocketHandler handler = webSocketHandlerProvider.getIfAvailable();
+            connectedSockets = (handler != null) ? handler.getConnectedWebSocketsCount() : activeUsersNow.size();
+        } catch (Exception e) {
+            connectedSockets = activeUsersNow.size();
+        }
+
+        final int finalConnectedSockets = connectedSockets;
+
+        return Mono.zip(
+            userInfoRepo.count().defaultIfEmpty(0L),
+            pulseInfoRepo.countActivePulses(now).defaultIfEmpty(0L),
+            pollRepo.countActivePolls(now).defaultIfEmpty(0L)
+        ).map(tuple -> {
+            Map<String, Object> metrics = new ConcurrentHashMap<>();
+            metrics.put("totalUsers", tuple.getT1());
+            metrics.put("activeUsersToday", activeUsersToday.size());
+            metrics.put("activeUsersNow", activeUsersNow.size());
+            metrics.put("messagesToday", messagesToday.get());
+            metrics.put("peakMessagesPerMinute", peakMessagesPerMinute.get());
+            metrics.put("activePulses", tuple.getT2());
+            metrics.put("activePolls", tuple.getT3());
+            metrics.put("connectedWebSockets", finalConnectedSockets);
+            metrics.put("timestamp", LocalDateTime.now().toString());
+            return metrics;
+        });
     }
 }
