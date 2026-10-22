@@ -24,7 +24,7 @@ public class UserLoginService {
 
     public Mono<Map<String, Object>> logUser(UserLoginDTO request){
         if (request == null || request.getUserId() == null || request.getPassword() == null) {
-            return Mono.just(Map.of("status", "ERROR", "message", "invalid request"));
+            return Mono.just(Map.<String, Object>of("status", "ERROR", "message", "invalid request"));
         }
         String identifier = request.getUserId().trim();
         System.out.println("logging: " + identifier);
@@ -53,10 +53,10 @@ public class UserLoginService {
                     return Mono.just(data);
                 }
             } else {
-                return Mono.just(Map.of("status", "ERROR", "message", "password incorrect"));
+                return Mono.just(Map.<String, Object>of("status", "ERROR", "message", "password incorrect"));
             }
         })
-        .switchIfEmpty(Mono.just(Map.of("status", "ERROR", "message", "no user exist")));
+        .switchIfEmpty(Mono.just(Map.<String, Object>of("status", "ERROR", "message", "no user exist")));
     }
 
     public Mono<UserInfo> verify2FALogin(String identifier, String otp) {
