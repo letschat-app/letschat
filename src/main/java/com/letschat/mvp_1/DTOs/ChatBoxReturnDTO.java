@@ -16,6 +16,8 @@ public class ChatBoxReturnDTO {
     private String Profile;
     private Long noOfMembers; 
     private Boolean isMuted;
+    private String username;
+    private String displayName;
 
     public ChatBoxReturnDTO(){}
     public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role,String Profile,Long noOfMembers){
@@ -115,5 +117,19 @@ public class ChatBoxReturnDTO {
     }
     public void setIsMuted(Boolean isMuted) {
         this.isMuted = isMuted;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+    public void setUsername(String username) {
+        this.username = username != null ? username.trim().toLowerCase() : null;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
     }
 }

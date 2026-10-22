@@ -1,12 +1,17 @@
 package com.letschat.mvp_1.DTOs;
 
+import java.time.LocalDateTime;
+
 public class UserSearchResult {
     private String UserId;
-    private String UserName;
+    private String UserName; // Chat Nickname or Active name
+    private String username; // Static lowercase public username
+    private String displayName; // User's profile display name
     private String Role;
     private String Profile;
+    private LocalDateTime lastDisplayNameChangeAt;
 
-    // 🟢 Universal Pulse Indicators
+    // Universal Pulse Indicators
     private boolean hasActivePulse;
     private boolean allSeen;
     private int pulseStreak;
@@ -41,6 +46,27 @@ public class UserSearchResult {
     }
     public void setUserName(String UserName){
         this.UserName = UserName;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+    public void setUsername(String username) {
+        this.username = username != null ? username.trim().toLowerCase() : null;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+    }
+
+    public LocalDateTime getLastDisplayNameChangeAt() {
+        return lastDisplayNameChangeAt;
+    }
+    public void setLastDisplayNameChangeAt(LocalDateTime lastDisplayNameChangeAt) {
+        this.lastDisplayNameChangeAt = lastDisplayNameChangeAt;
     }
 
     public String getRole(){

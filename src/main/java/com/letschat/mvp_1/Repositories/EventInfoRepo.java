@@ -177,4 +177,21 @@ public interface EventInfoRepo extends ReactiveCrudRepository<EventInfo, Long> {
           AND start_time BETWEEN :now AND :maxFuture
     """)
     Flux<EventInfo> findEventsForReminderEvaluation(Instant now, Instant maxFuture);
+
+    @Query("""
+        SELECT *
+        FROM "EventInfo"
+        WHERE booking_token = :token
+        LIMIT 1
+    """)
+    Mono<EventInfo> findByBookingToken(String token);
+
+    @Query("""
+        SELECT *
+        FROM "EventInfo"
+        WHERE (user_id = :userId OR guest_user_id = :userId)
+          AND external_status IS NOT NULL
+        ORDER BY start_time DESC
+    """)
+    Flux<EventInfo> findBookingsForUser(String userId);
 }

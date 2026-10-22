@@ -235,4 +235,71 @@ public class UsernameSimilarityEvaluator {
         }
         return maxLen;
     }
+
+    /**
+     * Computes similarity between a user's permanent username and a proposed display name / chat nickname.
+     * Evaluates token alignment, prefix match, and multi-metric overlap.
+     * Must be >= 3.0 out of 10 to pass.
+     */
+    public static double computeSelfSimilarity(String permanentUsername, String proposedName) {
+        if (permanentUsername == null || proposedName == null) {
+            return 0.0;
+        }
+        String cleanUser = permanentUsername.trim().toLowerCase();
+        String cleanTarget = proposedName.trim().toLowerCase();
+        if (cleanUser.isEmpty() || cleanTarget.isEmpty()) {
+            return 0.0;
+        }
+
+        String normUser = normalize(cleanUser);
+        String normTarget = normalize(cleanTarget);
+
+        if (normUser.equals(normTarget)) {
+            return 10.0;
+        }
+
+        double tokenScore = 0.0;
+        // Split proposed name into word/digit tokens (e.g. "alex kumar" -> ["alex", "kumar"])
+        String[] tokens = cleanTarget.split("[^a-z0-9]+");
+        for (String t : tokens) {
+            if (t.isEmpty()) continue;
+            String normT = normalize(t);
+            if (normT.equals(normUser)) {
+                // Exact token match (e.g. "alex" in "alex kumar" or "alex cse")
+                double ratio = (double) normUser.length() / Math.max(normUser.length(), normTarget.length());
+                double score = 7.0 + 3.0 * ratio;
+                if (score > tokenScore) tokenScore = score;
+            } else if (normT.startsWith(normUser)) {
+                // Prefix match (e.g. "alexander" starts with "alex")
+                double ratio = (double) normUser.length() / normT.length();
+                double score = 6.0 + 4.0 * ratio;
+                if (score > tokenScore) tokenScore = score;
+            } else if (normUser.startsWith(normT) && normT.length() >= 2) {
+                // Nickname/abbreviation (e.g. "al" from "alex")
+                double ratio = (double) normT.length() / normUser.length();
+                double score = 4.0 + 3.0 * ratio;
+                if (score > tokenScore) tokenScore = score;
+            }
+        }
+
+        // Standard string metrics (Levenshtein, Bigram, LCS)
+        double stringScore = computeScore(normUser, normTarget);
+
+        double finalScore = Math.max(tokenScore, stringScore);
+        finalScore = Math.min(10.0, Math.max(0.0, finalScore));
+        return Math.round(finalScore * 10.0) / 10.0;
+    }
+
+    /**
+     * Computes peer similarity between two participants in the same chat.
+     * Must be strictly < 8.0 out of 10 to avoid confusingly similar names.
+     */
+    public static double computePeerSimilarity(String candidateName, String peerName) {
+        if (candidateName == null || peerName == null) {
+            return 0.0;
+        }
+        String normA = normalize(candidateName);
+        String normB = normalize(peerName);
+        return computeScore(normA, normB);
+    }
 }

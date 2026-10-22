@@ -7,6 +7,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.letschat.mvp_1.DTOs.*;
@@ -26,17 +27,26 @@ public class EventService {
     private final GroupInfoRepo groupInfoRepo;
     private final UserInfoRepo userInfoRepo;
     private final MyWebSocketHandler myWebSocketHandler;
+    private final BrevoMailService brevoMailService;
+
+    @Value("${letschat.frontend.url:http://localhost:5173}")
+    private String frontendUrl;
+
+    @Value("${letschat.app.download-url:https://letschat.com/download}")
+    private String appDownloadUrl;
 
     public EventService(
         EventInfoRepo eventInfoRepo,
         GroupInfoRepo groupInfoRepo,
         UserInfoRepo userInfoRepo,
-        MyWebSocketHandler myWebSocketHandler
+        MyWebSocketHandler myWebSocketHandler,
+        BrevoMailService brevoMailService
     ) {
         this.eventInfoRepo = eventInfoRepo;
         this.groupInfoRepo = groupInfoRepo;
         this.userInfoRepo = userInfoRepo;
         this.myWebSocketHandler = myWebSocketHandler;
+        this.brevoMailService = brevoMailService;
     }
 
     // Legacy support
@@ -303,6 +313,9 @@ public class EventService {
     public Mono<List<PublicBookingSlotDTO>> getPublicBusySlots(String userIdentifier, LocalDate date) {
         return userInfoRepo.findByBookingSlugOrUser(userIdentifier)
             .flatMapMany(user -> {
+                if (user.getIsBookingEnabled() != null && !user.getIsBookingEnabled()) {
+                    return Flux.empty(); // Booking disabled by host
+                }
                 if (!user.getShowBusySlotsExternal()) {
                     return Flux.empty(); // privacy mode: zero slots exposed
                 }
@@ -315,10 +328,29 @@ public class EventService {
             .collectList();
     }
 
-    public Mono<String> requestPublicBooking(String userIdentifier, PublicBookingRequestDTO dto) {
+    public Mono<Map<String, Object>> getPublicHostInfo(String userIdentifier) {
+        return userInfoRepo.findByBookingSlugOrUser(userIdentifier)
+            .switchIfEmpty(Mono.error(new RuntimeException("Host not found")))
+            .map(user -> {
+                Map<String, Object> info = new HashMap<>();
+                info.put("userId", user.getUserId());
+                info.put("userName", user.getPublicName() != null ? user.getPublicName() : user.getUserId());
+                info.put("profilePic", user.getProfilePic());
+                info.put("bookingSlug", user.getBookingSlug() != null ? user.getBookingSlug() : user.getUserId());
+                info.put("isBookingEnabled", user.getIsBookingEnabled() != null ? user.getIsBookingEnabled() : true);
+                info.put("showBusySlots", user.getShowBusySlotsExternal() != null ? user.getShowBusySlotsExternal() : false);
+                return info;
+            });
+    }
+
+    public Mono<Map<String, Object>> requestPublicBooking(String userIdentifier, PublicBookingRequestDTO dto) {
         return userInfoRepo.findByBookingSlugOrUser(userIdentifier)
             .switchIfEmpty(Mono.error(new RuntimeException("Host not found")))
             .flatMap(host -> {
+                if (host.getIsBookingEnabled() != null && !host.getIsBookingEnabled()) {
+                    return Mono.error(new RuntimeException("Host is currently not accepting new bookings."));
+                }
+
                 Instant start = dto.getStartTime();
                 Instant end = dto.getEndTime() != null ? dto.getEndTime() : start.plus(1, ChronoUnit.HOURS);
 
@@ -328,12 +360,14 @@ public class EventService {
                             return Mono.error(new RuntimeException("Selected time slot is no longer available."));
                         }
 
+                        String bookingToken = UUID.randomUUID().toString();
+
                         EventInfo ev = new EventInfo();
                         ev.setUserId(host.getUserId());
                         ev.setEventTitle(dto.getAgenda() != null ? dto.getAgenda() : "Meeting Request");
                         ev.setStartTime(start);
                         ev.setEndTime(end);
-                        ev.setEventDetails("External request from " + dto.getBookerName() + " (" + dto.getBookerEmail() + ")");
+                        ev.setEventDetails("Meeting with " + dto.getBookerName() + " (" + dto.getBookerEmail() + ")");
                         ev.setMeetingType(dto.getMeetingType() != null ? dto.getMeetingType() : "online");
                         ev.setMeetingLink(dto.getMeetingLink());
                         ev.setLocation(dto.getLocation());
@@ -344,15 +378,21 @@ public class EventService {
                         ev.setIsSync(true);
                         ev.setReminderEnabled(true);
                         ev.setReminderOffset(60);
+                        ev.setBookingToken(bookingToken);
+                        ev.setGuestUserId(dto.getGuestUserId());
+                        ev.setLastModifiedBy("GUEST");
+                        ev.setChangeMessage(dto.getAgenda());
 
                         return eventInfoRepo.save(ev)
-                            .doOnSuccess(saved -> {
+                            .flatMap(saved -> {
                                 Map<String, Object> alert = new HashMap<>();
                                 alert.put("type", "booking_request");
                                 alert.put("eventId", saved.getEventId());
+                                alert.put("bookingToken", bookingToken);
                                 alert.put("agenda", dto.getAgenda());
                                 alert.put("bookerName", dto.getBookerName());
                                 alert.put("bookerEmail", dto.getBookerEmail());
+                                alert.put("guestUserId", dto.getGuestUserId());
                                 alert.put("startTime", start.toString());
                                 alert.put("endTime", end.toString());
                                 alert.put("meetingType", dto.getMeetingType());
@@ -360,9 +400,290 @@ public class EventService {
                                 alert.put("location", dto.getLocation());
 
                                 myWebSocketHandler.sendToUser(host.getUserId(), alert);
-                            })
-                            .thenReturn("Meeting request submitted successfully.");
+
+                                // If guest is also a LetsChat user: NO email, send WebSocket update
+                                if (dto.getGuestUserId() != null && !dto.getGuestUserId().isEmpty()) {
+                                    Map<String, Object> guestAlert = new HashMap<>(alert);
+                                    guestAlert.put("type", "booking_created");
+                                    myWebSocketHandler.sendToUser(dto.getGuestUserId(), guestAlert);
+
+                                    Map<String, Object> result = new HashMap<>();
+                                    result.put("status", "success");
+                                    result.put("message", "Meeting request submitted successfully.");
+                                    result.put("bookingToken", bookingToken);
+                                    result.put("eventId", saved.getEventId());
+                                    return Mono.just(result);
+                                }
+
+                                // External Guest: Send Transactional Email with magic link & LetsChat download banner
+                                String hostName = host.getPublicName() != null ? host.getPublicName() : "Host";
+                                String manageLink = frontendUrl + "/booking/view/" + bookingToken;
+                                String emailHtml = buildGuestEmailHtml(
+                                    hostName,
+                                    dto.getAgenda(),
+                                    start.toString(),
+                                    end.toString(),
+                                    dto.getMeetingType(),
+                                    dto.getLocation() != null ? dto.getLocation() : dto.getMeetingLink(),
+                                    manageLink,
+                                    "Your meeting request has been submitted to <strong>" + hostName + "</strong>."
+                                );
+
+                                return brevoMailService.sendEmail(
+                                    dto.getBookerEmail(),
+                                    "Meeting Request Submitted: " + dto.getAgenda(),
+                                    emailHtml
+                                ).map(sent -> {
+                                    Map<String, Object> result = new HashMap<>();
+                                    result.put("status", "success");
+                                    result.put("message", "Meeting request submitted successfully. Confirmation email sent.");
+                                    result.put("bookingToken", bookingToken);
+                                    result.put("eventId", saved.getEventId());
+                                    return result;
+                                });
+                            });
                     });
+            });
+    }
+
+    public Mono<Map<String, Object>> getBookingDetails(String tokenOrId, String authUserId) {
+        Mono<EventInfo> findMono;
+        if (tokenOrId != null && tokenOrId.matches("\\d+")) {
+            findMono = eventInfoRepo.findById(Long.parseLong(tokenOrId))
+                .switchIfEmpty(eventInfoRepo.findByBookingToken(tokenOrId));
+        } else {
+            findMono = eventInfoRepo.findByBookingToken(tokenOrId);
+        }
+
+        return findMono
+            .switchIfEmpty(Mono.error(new RuntimeException("Booking not found")))
+            .flatMap(ev -> {
+                boolean isHost = authUserId != null && authUserId.equals(ev.getUserId());
+                boolean isGuest = (authUserId != null && authUserId.equals(ev.getGuestUserId()))
+                    || (ev.getBookingToken() != null && ev.getBookingToken().equalsIgnoreCase(tokenOrId));
+
+                return userInfoRepo.findByIdentifier(ev.getUserId())
+                    .defaultIfEmpty(new UserInfo())
+                    .flatMap(host -> {
+                        Mono<UserInfo> guestMono = (ev.getGuestUserId() != null)
+                            ? userInfoRepo.findByIdentifier(ev.getGuestUserId()).defaultIfEmpty(new UserInfo())
+                            : Mono.just(new UserInfo());
+
+                        return guestMono.map(guestUser -> {
+                            Map<String, Object> res = new HashMap<>();
+                            res.put("eventId", ev.getEventId());
+                            res.put("bookingToken", ev.getBookingToken());
+                            res.put("eventTitle", ev.getEventTitle());
+                            res.put("eventDetails", ev.getEventDetails());
+                            res.put("startTime", ev.getStartTime());
+                            res.put("endTime", ev.getEndTime());
+                            res.put("meetingType", ev.getMeetingType());
+                            res.put("meetingLink", ev.getMeetingLink());
+                            res.put("location", ev.getLocation());
+                            res.put("externalStatus", ev.getExternalStatus());
+                            res.put("action", ev.getAction());
+                            res.put("lastModifiedBy", ev.getLastModifiedBy());
+                            res.put("changeMessage", ev.getChangeMessage());
+                            res.put("hostUserId", ev.getUserId());
+                            res.put("hostName", host.getPublicName() != null ? host.getPublicName() : host.getUserId());
+                            res.put("hostProfilePic", host.getProfilePic());
+                            res.put("guestUserId", ev.getGuestUserId());
+                            res.put("bookerName", ev.getGuestUserId() != null && guestUser.getPublicName() != null ? guestUser.getPublicName() : ev.getExternalBookerName());
+                            res.put("bookerEmail", ev.getExternalBookerEmail());
+                            res.put("guestProfilePic", guestUser.getProfilePic());
+                            res.put("isHost", isHost);
+                            res.put("isGuest", isGuest);
+                            res.put("canManage", isHost || isGuest);
+                            return res;
+                        });
+                    });
+            });
+    }
+
+    public Mono<Map<String, Object>> respondToBooking(String tokenOrId, Map<String, Object> body, String authUserId) {
+        Mono<EventInfo> findMono;
+        if (tokenOrId != null && tokenOrId.matches("\\d+")) {
+            findMono = eventInfoRepo.findById(Long.parseLong(tokenOrId))
+                .switchIfEmpty(eventInfoRepo.findByBookingToken(tokenOrId));
+        } else {
+            findMono = eventInfoRepo.findByBookingToken(tokenOrId);
+        }
+
+        return findMono
+            .switchIfEmpty(Mono.error(new RuntimeException("Booking not found")))
+            .flatMap(ev -> {
+                boolean isHost = authUserId != null && authUserId.equals(ev.getUserId());
+                boolean isGuest = (authUserId != null && authUserId.equals(ev.getGuestUserId()))
+                    || (ev.getBookingToken() != null && ev.getBookingToken().equalsIgnoreCase(tokenOrId));
+
+                if (!isHost && !isGuest) {
+                    return Mono.error(new RuntimeException("Unauthorized to modify this booking"));
+                }
+
+                String responder = isHost ? "HOST" : "GUEST";
+                String action = body.get("action") != null ? body.get("action").toString().toUpperCase() : "";
+                String message = body.get("message") != null ? body.get("message").toString() : null;
+
+                switch (action) {
+                    case "ACCEPT":
+                        ev.setExternalStatus("approved");
+                        ev.setAction("scheduled");
+                        ev.setIsAdded(true);
+                        ev.setIsSync(true);
+                        ev.setLastModifiedBy(responder);
+                        ev.setChangeMessage(message != null ? message : (responder.equals("HOST") ? "Host accepted the meeting." : "Guest accepted the meeting."));
+                        break;
+
+                    case "PROPOSE_TIME":
+                        if (body.get("startTime") != null) {
+                            ev.setStartTime(Instant.parse(body.get("startTime").toString()));
+                        }
+                        if (body.get("endTime") != null) {
+                            ev.setEndTime(Instant.parse(body.get("endTime").toString()));
+                        }
+                        ev.setExternalStatus(responder.equals("HOST") ? "proposed_by_host" : "proposed_by_guest");
+                        ev.setLastModifiedBy(responder);
+                        ev.setChangeMessage(message != null ? message : (responder + " proposed a new time."));
+                        break;
+
+                    case "CHANGE_LOCATION":
+                        if (body.get("meetingType") != null) {
+                            ev.setMeetingType(body.get("meetingType").toString());
+                        }
+                        if (body.get("meetingLink") != null) {
+                            ev.setMeetingLink(body.get("meetingLink").toString());
+                        }
+                        if (body.get("location") != null) {
+                            ev.setLocation(body.get("location").toString());
+                        }
+                        ev.setExternalStatus(responder.equals("HOST") ? "location_changed_by_host" : "location_changed_by_guest");
+                        ev.setLastModifiedBy(responder);
+                        ev.setChangeMessage(message != null ? message : (responder + " updated the meeting location/link."));
+                        break;
+
+                    case "CANCEL":
+                    case "DECLINE":
+                        ev.setExternalStatus("cancelled");
+                        ev.setAction("cancelled");
+                        ev.setIsAdded(false);
+                        ev.setLastModifiedBy(responder);
+                        ev.setChangeMessage(message != null ? message : (responder + " cancelled the meeting."));
+                        break;
+
+                    default:
+                        return Mono.error(new RuntimeException("Unknown response action: " + action));
+                }
+
+                return eventInfoRepo.save(ev)
+                    .flatMap(saved -> {
+                        Map<String, Object> updateAlert = new HashMap<>();
+                        updateAlert.put("type", "booking_update");
+                        updateAlert.put("eventId", saved.getEventId());
+                        updateAlert.put("bookingToken", saved.getBookingToken());
+                        updateAlert.put("externalStatus", saved.getExternalStatus());
+                        updateAlert.put("lastModifiedBy", saved.getLastModifiedBy());
+                        updateAlert.put("changeMessage", saved.getChangeMessage());
+                        updateAlert.put("startTime", saved.getStartTime().toString());
+                        updateAlert.put("endTime", saved.getEndTime().toString());
+                        updateAlert.put("meetingType", saved.getMeetingType());
+                        updateAlert.put("meetingLink", saved.getMeetingLink());
+                        updateAlert.put("location", saved.getLocation());
+
+                        // Send WebSocket to Host
+                        myWebSocketHandler.sendToUser(saved.getUserId(), updateAlert);
+
+                        // If guest is LetsChat user: send WebSocket to Guest, NO email!
+                        if (saved.getGuestUserId() != null && !saved.getGuestUserId().isEmpty()) {
+                            myWebSocketHandler.sendToUser(saved.getGuestUserId(), updateAlert);
+                            Map<String, Object> res = new HashMap<>();
+                            res.put("status", "success");
+                            res.put("externalStatus", saved.getExternalStatus());
+                            res.put("message", "Booking updated successfully.");
+                            return Mono.just(res);
+                        }
+
+                        // If guest is external AND Host updated it -> Send email notification to guest
+                        if (saved.getGuestUserId() == null && isHost && saved.getExternalBookerEmail() != null) {
+                            return userInfoRepo.findByIdentifier(saved.getUserId())
+                                .defaultIfEmpty(new UserInfo())
+                                .flatMap(hostUser -> {
+                                    String hostName = hostUser.getPublicName() != null ? hostUser.getPublicName() : "Host";
+                                    String manageLink = frontendUrl + "/booking/view/" + saved.getBookingToken();
+                                    String note = "Meeting update from <strong>" + hostName + "</strong>: " + (saved.getChangeMessage() != null ? saved.getChangeMessage() : saved.getExternalStatus());
+
+                                    String emailHtml = buildGuestEmailHtml(
+                                        hostName,
+                                        saved.getEventTitle(),
+                                        saved.getStartTime().toString(),
+                                        saved.getEndTime().toString(),
+                                        saved.getMeetingType(),
+                                        saved.getLocation() != null ? saved.getLocation() : saved.getMeetingLink(),
+                                        manageLink,
+                                        note
+                                    );
+
+                                    return brevoMailService.sendEmail(
+                                        saved.getExternalBookerEmail(),
+                                        "Meeting Update: " + saved.getEventTitle() + " (" + saved.getExternalStatus() + ")",
+                                        emailHtml
+                                    ).map(sent -> {
+                                        Map<String, Object> res = new HashMap<>();
+                                        res.put("status", "success");
+                                        res.put("externalStatus", saved.getExternalStatus());
+                                        res.put("message", "Booking updated and email notification sent to guest.");
+                                        return res;
+                                    });
+                                });
+                        }
+
+                        Map<String, Object> res = new HashMap<>();
+                        res.put("status", "success");
+                        res.put("externalStatus", saved.getExternalStatus());
+                        res.put("message", "Booking updated successfully.");
+                        return Mono.just(res);
+                    });
+            });
+    }
+
+    public Flux<Map<String, Object>> getUserBookings(String userId) {
+        return eventInfoRepo.findBookingsForUser(userId)
+            .flatMap(ev -> {
+                boolean isHost = userId.equals(ev.getUserId());
+                String otherUserId = isHost ? ev.getGuestUserId() : ev.getUserId();
+
+                Mono<UserInfo> otherUserMono = (otherUserId != null && !otherUserId.isEmpty())
+                    ? userInfoRepo.findByIdentifier(otherUserId).defaultIfEmpty(new UserInfo())
+                    : Mono.just(new UserInfo());
+
+                return otherUserMono.map(other -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("eventId", ev.getEventId());
+                    map.put("bookingToken", ev.getBookingToken());
+                    map.put("eventTitle", ev.getEventTitle());
+                    map.put("eventDetails", ev.getEventDetails());
+                    map.put("startTime", ev.getStartTime());
+                    map.put("endTime", ev.getEndTime());
+                    map.put("meetingType", ev.getMeetingType());
+                    map.put("meetingLink", ev.getMeetingLink());
+                    map.put("location", ev.getLocation());
+                    map.put("externalStatus", ev.getExternalStatus());
+                    map.put("action", ev.getAction());
+                    map.put("lastModifiedBy", ev.getLastModifiedBy());
+                    map.put("changeMessage", ev.getChangeMessage());
+                    map.put("isHost", isHost);
+                    map.put("hostUserId", ev.getUserId());
+                    map.put("guestUserId", ev.getGuestUserId());
+                    if (isHost) {
+                        map.put("otherPartyName", ev.getGuestUserId() != null && other.getPublicName() != null ? other.getPublicName() : ev.getExternalBookerName());
+                        map.put("otherPartyEmail", ev.getExternalBookerEmail());
+                        map.put("otherPartyPic", other.getProfilePic());
+                    } else {
+                        map.put("otherPartyName", other.getPublicName() != null ? other.getPublicName() : other.getUserId());
+                        map.put("otherPartyEmail", other.getEmail());
+                        map.put("otherPartyPic", other.getProfilePic());
+                    }
+                    return map;
+                });
             });
     }
 
@@ -389,8 +710,60 @@ public class EventService {
             });
     }
 
-    public Mono<String> updateBookingPrivacy(String userId, Boolean showBusySlots) {
-        return userInfoRepo.updateShowBusySlots(userId, showBusySlots)
-            .thenReturn("ok");
+    public Mono<String> updateBookingPrivacy(String userId, Boolean showBusySlots, Boolean isBookingEnabled) {
+        Mono<Integer> s1 = (showBusySlots != null)
+            ? userInfoRepo.updateShowBusySlots(userId, showBusySlots)
+            : Mono.just(1);
+        Mono<Integer> s2 = (isBookingEnabled != null)
+            ? userInfoRepo.updateIsBookingEnabled(userId, isBookingEnabled)
+            : Mono.just(1);
+        return s1.then(s2).thenReturn("ok");
+    }
+
+    private String buildGuestEmailHtml(
+        String hostName,
+        String agenda,
+        String startTime,
+        String endTime,
+        String meetingType,
+        String locationOrLink,
+        String manageLink,
+        String statusNote
+    ) {
+        return """
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+                <div style="text-align: center; margin-bottom: 24px;">
+                    <h2 style="color: #0f172a; margin: 0 0 8px 0;">LetsChat Meeting Schedule</h2>
+                    <p style="color: #64748b; margin: 0; font-size: 15px;">%s</p>
+                </div>
+                <div style="background-color: #f8fafc; border-radius: 8px; padding: 20px; margin-bottom: 24px; border-left: 4px solid #6366f1;">
+                    <p style="margin: 0 0 10px 0; font-size: 16px;"><strong>Topic:</strong> %s</p>
+                    <p style="margin: 0 0 10px 0; font-size: 14px; color: #334155;"><strong>Host:</strong> %s</p>
+                    <p style="margin: 0 0 10px 0; font-size: 14px; color: #334155;"><strong>Start:</strong> %s</p>
+                    <p style="margin: 0 0 10px 0; font-size: 14px; color: #334155;"><strong>End:</strong> %s</p>
+                    <p style="margin: 0; font-size: 14px; color: #334155;"><strong>Location/Link:</strong> %s</p>
+                </div>
+                <div style="text-align: center; margin-bottom: 32px;">
+                    <a href="%s" style="background-color: #6366f1; color: #ffffff; padding: 12px 28px; font-weight: 600; text-decoration: none; border-radius: 8px; display: inline-block;">View, Reschedule or Manage Meeting</a>
+                </div>
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; text-align: center; background-color: #f1f5f9; border-radius: 8px; padding: 16px;">
+                    <p style="margin: 0; color: #475569; font-size: 14px;">
+                        Want to chat directly with <strong>%s</strong>? 
+                        <a href="%s" style="color: #6366f1; font-weight: 600; text-decoration: none;">Download LetsChat</a> to connect instantly!
+                    </p>
+                </div>
+            </div>
+            """.formatted(
+                statusNote,
+                agenda != null ? agenda : "Discussion",
+                hostName,
+                startTime,
+                endTime,
+                locationOrLink != null ? locationOrLink : "To be decided",
+                manageLink,
+                hostName,
+                appDownloadUrl
+            );
     }
 }
+

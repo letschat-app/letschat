@@ -9,9 +9,7 @@ import org.springframework.stereotype.Component;
 
 import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.DTOs.UserSignUpDTO;
-import com.letschat.mvp_1.Models.LocationInfo;
 import com.letschat.mvp_1.Repositories.IdTableRepo;
-import com.letschat.mvp_1.Repositories.LocationInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
 
 import reactor.core.publisher.Mono;
@@ -19,7 +17,6 @@ import reactor.core.publisher.Mono;
 @Component
 public class UserSignUpService {
     private final UserInfoRepo userInfoRepo;
-    private final LocationInfoRepo locationInfoRepo;
     private final IdTableRepo idTableRepo;
     private final AdminService adminService;
     private final OtpService otpService;
@@ -30,9 +27,8 @@ public class UserSignUpService {
 
     private record PendingSignupEntry(UserSignUpDTO dto, Instant expiresAt) {}
 
-    public UserSignUpService(UserInfoRepo userInfoRepo, LocationInfoRepo locationInfoRepo, IdTableRepo idTableRepo, AdminService adminService, OtpService otpService, UsernameValidationService usernameValidationService){
+    public UserSignUpService(UserInfoRepo userInfoRepo, IdTableRepo idTableRepo, AdminService adminService, OtpService otpService, UsernameValidationService usernameValidationService){
         this.userInfoRepo = userInfoRepo;
-        this.locationInfoRepo = locationInfoRepo;
         this.idTableRepo = idTableRepo;
         this.adminService = adminService;
         this.otpService = otpService;
@@ -44,11 +40,13 @@ public class UserSignUpService {
             return Mono.just(false);
         }
         String cleanEmail = request.getEmail().trim().toLowerCase();
+        String cleanUsername = request.getPublicName().trim().toLowerCase();
+        request.setPublicName(cleanUsername);
 
-        return usernameValidationService.checkUsername(request.getPublicName(), null)
+        return usernameValidationService.checkUsername(cleanUsername, null)
             .flatMap(checkResult -> {
                 if ("BLOCK".equals(checkResult.getDecision())) {
-                    System.out.println("[SignUp] Rejected duplicate/similar username: " + request.getPublicName());
+                    System.out.println("[SignUp] Rejected duplicate/similar username: " + cleanUsername);
                     return Mono.just(false);
                 }
                 pendingSignupMap.put(cleanEmail, new PendingSignupEntry(request, Instant.now().plusSeconds(PENDING_SIGNUP_TTL_SECONDS)));
@@ -80,12 +78,17 @@ public class UserSignUpService {
         pendingSignupMap.entrySet().removeIf(e -> now.isAfter(e.getValue().expiresAt()));
     }
 
-    private Mono<UserSearchResult> persistAndWelcomeUser(String id, UserSignUpDTO request, long locationId) {
-        return userInfoRepo.insertWithEmail(id, request.getPrivateName(), request.getPublicName(), request.getAge(), request.getGender(), locationId, request.getPassword(), request.getEmail())
+    private Mono<UserSearchResult> persistAndWelcomeUser(String id, UserSignUpDTO request) {
+        String cleanUsername = request.getPublicName().trim().toLowerCase();
+        String displayName = (request.getPrivateName() != null && !request.getPrivateName().trim().isEmpty())
+            ? request.getPrivateName().trim()
+            : cleanUsername;
+
+        return userInfoRepo.insertWithEmail(id, displayName, cleanUsername, request.getPassword(), request.getEmail())
             .doOnSuccess(user -> {
                 adminService.onUserRegistered(id);
                 String targetEmail = (user != null && user.getEmail() != null) ? user.getEmail() : request.getEmail();
-                String username = (user != null && user.getPublicName() != null) ? user.getPublicName() : request.getPublicName();
+                String username = (user != null && user.getPublicName() != null) ? user.getPublicName() : cleanUsername;
                 if (targetEmail != null && !targetEmail.trim().isEmpty()) {
                     otpService.sendWelcomeEmail(targetEmail, username, id)
                         .subscribe(
@@ -98,19 +101,15 @@ public class UserSignUpService {
                 UserSearchResult result = new UserSearchResult();
                 result.setUserId(id);
                 result.setUserName(user.getPublicName());
+                result.setUsername(user.getPublicName());
+                result.setDisplayName(user.getPrivateName());
                 result.setProfile(user.getUserProfilePath());
                 return result;
             });
     }
 
     public Mono<UserSearchResult> createUserFromDTO(UserSignUpDTO request) {
-        return locationInfoRepo.findExact(request.getStateName(), request.getDistrictName(), request.getVillageName())
-            .flatMap(location -> generateId().flatMap(id -> persistAndWelcomeUser(id, request, location.getLocationId())))
-            .switchIfEmpty(Mono.defer(() -> {
-                System.out.println("switch:" + request.getDistrictName() + request.getStateName());
-                return locationInfoRepo.insert(request.getStateName(), request.getDistrictName(), request.getVillageName())
-                    .flatMap(location -> generateId().flatMap(id -> persistAndWelcomeUser(id, request, location.getLocationId())));
-            }));
+        return generateId().flatMap(id -> persistAndWelcomeUser(id, request));
     }
 
     public Mono<String> createUser(UserSignUpDTO request){
@@ -127,7 +126,6 @@ public class UserSignUpService {
         return userInfoRepo.findlastuser()
         .doOnNext(u -> System.out.println(u))
         .map(user -> {
-            System.out.println("in generate:" + user.getUserId() + user.getAge());
             String id = user.getUserId();
             System.out.println(id);
             int num = Integer.parseInt(id.replaceAll("[^0-9]", ""));

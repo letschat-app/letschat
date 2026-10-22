@@ -93,44 +93,42 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public Mono<ResponseEntity<Object>> login(@RequestBody UserLoginDTO request){
+    public Mono<ResponseEntity<Map<String, Object>>> login(@RequestBody UserLoginDTO request){
         return userLoginService.logUser(request)
         .map(result -> {
-            if (result.startsWith("2FA_REQUIRED:")) {
-                String userId = result.substring("2FA_REQUIRED:".length());
-                return ResponseEntity.ok((Object) Map.of(
-                    "status", "2FA_REQUIRED",
-                    "userId", userId,
-                    "message", "2-Factor Authentication OTP sent to your registered email"
-                ));
-            } else if ("login succesfull".equals(result)) {
-                return ResponseEntity.ok((Object) Map.of(
-                    "status", "SUCCESS",
-                    "message", "login succesfull"
-                ));
+            String status = (String) result.get("status");
+            if ("SUCCESS".equals(status) || "2FA_REQUIRED".equals(status)) {
+                return ResponseEntity.ok(result);
             } else {
-                return ResponseEntity.status(400).body((Object) Map.of(
-                    "status", "ERROR",
-                    "message", result
-                ));
+                return ResponseEntity.status(400).body(result);
             }
         });
     }
 
     @PostMapping("/login/2fa-verify")
-    public Mono<ResponseEntity<Map<String, String>>> verify2FALogin(@RequestBody Map<String, String> body) {
+    public Mono<ResponseEntity<Map<String, Object>>> verify2FALogin(@RequestBody Map<String, String> body) {
         String identifier = body.get("identifier");
         if (identifier == null) identifier = body.get("userId");
         String otp = body.get("otp");
 
         if (identifier == null || otp == null) {
-            return Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", "identifier and otp are required")));
+            return Mono.just(ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "identifier and otp are required")));
         }
 
         return userLoginService.verify2FALogin(identifier, otp)
-                .map(valid -> valid 
-                    ? ResponseEntity.ok(Map.of("status", "SUCCESS", "message", "2FA verified, login successful"))
-                    : ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "Invalid or expired 2FA OTP")));
+                .map(user -> {
+                    Map<String, Object> data = new java.util.HashMap<>();
+                    data.put("status", "SUCCESS");
+                    data.put("message", "2FA verified, login successful");
+                    data.put("userId", user.getUserId());
+                    data.put("username", user.getPublicName());
+                    data.put("displayName", user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty() ? user.getPrivateName() : user.getPublicName());
+                    data.put("email", user.getEmail() != null ? user.getEmail() : "");
+                    data.put("profile", user.getUserProfilePath() != null ? user.getUserProfilePath() : "");
+                    data.put("is2FAEnabled", true);
+                    return ResponseEntity.ok(data);
+                })
+                .defaultIfEmpty(ResponseEntity.status(400).body(Map.of("status", "ERROR", "message", "Invalid or expired 2FA OTP")));
     }
 
     @PostMapping("/2fa/send-otp")
@@ -257,6 +255,98 @@ public class UserController {
     public Mono<ResponseEntity<String>> updateaction(@RequestBody EventInfo event){
         System.out.println("updated");
         return eventService.action(event).thenReturn(ResponseEntity.ok("ok"));
+    }
+
+    @PostMapping("/update-display-name")
+    public Mono<ResponseEntity<Object>> updateDisplayName(
+        @RequestHeader("User-Id") String userId,
+        @RequestBody Map<String, String> body
+    ) {
+        String displayName = body.get("displayName");
+        if (displayName == null || displayName.trim().isEmpty()) {
+            return Mono.just(ResponseEntity.badRequest().<Object>body(Map.of("status", "ERROR", "message", "Display name cannot be empty")));
+        }
+        String cleanDisplayName = displayName.trim();
+
+        return userInfoRepo.findByUserId(userId)
+            .flatMap(user -> {
+                // 1. Self-similarity check (>= 3.0 out of 10 with permanent username)
+                double simScore = com.letschat.mvp_1.Service.UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), cleanDisplayName);
+                if (simScore < 3.0) {
+                    return Mono.just(ResponseEntity.badRequest().<Object>body(Map.of(
+                        "status", "SIMILARITY_TOO_LOW",
+                        "score", simScore,
+                        "message", "Display name must have at least 3/10 similarity with your permanent username (@" + user.getPublicName() + "). Current score: " + simScore + "/10"
+                    )));
+                }
+
+                // 2. Atomic 24-hour cooldown check directly in database query
+                java.time.LocalDateTime now = java.time.LocalDateTime.now();
+                java.time.LocalDateTime cooldownThreshold = now.minusHours(24);
+
+                return userInfoRepo.updateDisplayNameAtomic(cleanDisplayName, now, cooldownThreshold, userId)
+                    .flatMap(updatedUser -> {
+                        // Cascading update to uncustomized chats
+                        return userChatInfoRepo.propagateDisplayName(userId, cleanDisplayName)
+                            .thenReturn(ResponseEntity.ok().<Object>body(Map.of(
+                                "status", "SUCCESS",
+                                "displayName", updatedUser.getPrivateName(),
+                                "username", updatedUser.getPublicName(),
+                                "userId", updatedUser.getUserId(),
+                                "lastDisplayNameChangeAt", updatedUser.getLastDisplayNameChangeAt() != null ? updatedUser.getLastDisplayNameChangeAt().toString() : now.toString()
+                            )));
+                    })
+                    .switchIfEmpty(Mono.defer(() -> {
+                        // If 0 rows updated, check remaining cooldown
+                        if (user.getLastDisplayNameChangeAt() != null) {
+                            java.time.Duration elapsed = java.time.Duration.between(user.getLastDisplayNameChangeAt(), now);
+                            if (elapsed.toHours() < 24) {
+                                long remainingMinutes = (24 * 60) - elapsed.toMinutes();
+                                long hours = remainingMinutes / 60;
+                                long mins = remainingMinutes % 60;
+                                return Mono.just(ResponseEntity.status(429).<Object>body(Map.of(
+                                    "status", "COOLDOWN_ACTIVE",
+                                    "remainingMinutes", remainingMinutes,
+                                    "message", "Display name can only be changed once every 24 hours. You can change it again in " + hours + "h " + mins + "m"
+                                )));
+                            }
+                        }
+                        return Mono.just(ResponseEntity.badRequest().<Object>body(Map.of("status", "ERROR", "message", "Unable to update display name")));
+                    }));
+            })
+            .defaultIfEmpty(ResponseEntity.status(404).<Object>body(Map.of("status", "ERROR", "message", "User not found")));
+    }
+
+    @GetMapping("/check-display-name")
+    public Mono<ResponseEntity<Object>> checkDisplayName(
+        @RequestHeader("User-Id") String userId,
+        @RequestParam("name") String name
+    ) {
+        if (name == null || name.trim().isEmpty()) {
+            return Mono.just(ResponseEntity.ok().<Object>body(Map.of("allowed", false, "score", 0.0, "message", "Name cannot be empty")));
+        }
+        return userInfoRepo.findByUserId(userId)
+            .map(user -> {
+                double score = com.letschat.mvp_1.Service.UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), name.trim());
+                boolean allowed = score >= 3.0;
+                boolean cooldownActive = false;
+                long remainingMinutes = 0;
+                if (user.getLastDisplayNameChangeAt() != null) {
+                    java.time.Duration elapsed = java.time.Duration.between(user.getLastDisplayNameChangeAt(), java.time.LocalDateTime.now());
+                    if (elapsed.toHours() < 24) {
+                        cooldownActive = true;
+                        remainingMinutes = (24 * 60) - elapsed.toMinutes();
+                    }
+                }
+                return ResponseEntity.ok().<Object>body(Map.of(
+                    "allowed", allowed,
+                    "score", score,
+                    "cooldownActive", cooldownActive,
+                    "remainingMinutes", remainingMinutes,
+                    "message", allowed ? "Name is valid" : "Must have at least 3/10 similarity with @" + user.getPublicName()
+                ));
+            })
+            .defaultIfEmpty(ResponseEntity.status(404).build());
     }
 
     @GetMapping("/getchatinfo/{Chatid}")

@@ -35,7 +35,11 @@ public class EventInfo {
     private String rsvpStatus; // "going", "not_going", "maybe"
     private String externalBookerName;
     private String externalBookerEmail;
-    private String externalStatus; // "pending", "approved", "declined"
+    private String externalStatus; // "pending", "approved", "declined", "proposed_by_host", "proposed_by_guest"
+    private String bookingToken;
+    private String guestUserId;
+    private String lastModifiedBy; // "HOST" or "GUEST"
+    private String changeMessage;
 
     public EventInfo(){}
 
@@ -236,5 +240,33 @@ public class EventInfo {
     }
     public void setExternalStatus(String externalStatus) {
         this.externalStatus = externalStatus;
+    }
+
+    public String getBookingToken() {
+        return bookingToken;
+    }
+    public void setBookingToken(String bookingToken) {
+        this.bookingToken = bookingToken;
+    }
+
+    public String getGuestUserId() {
+        return guestUserId;
+    }
+    public void setGuestUserId(String guestUserId) {
+        this.guestUserId = guestUserId;
+    }
+
+    public String getLastModifiedBy() {
+        return lastModifiedBy;
+    }
+    public void setLastModifiedBy(String lastModifiedBy) {
+        this.lastModifiedBy = lastModifiedBy;
+    }
+
+    public String getChangeMessage() {
+        return changeMessage;
+    }
+    public void setChangeMessage(String changeMessage) {
+        this.changeMessage = changeMessage;
     }
 }

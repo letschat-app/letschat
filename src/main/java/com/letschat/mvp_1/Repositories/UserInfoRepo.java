@@ -1,5 +1,7 @@
 package com.letschat.mvp_1.Repositories;
 
+import java.time.LocalDateTime;
+
 import org.springframework.data.r2dbc.repository.Modifying;
 import org.springframework.data.r2dbc.repository.Query;
 import org.springframework.data.repository.reactive.ReactiveCrudRepository;
@@ -13,8 +15,8 @@ import reactor.core.publisher.Mono;
 public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
     Mono<UserInfo> findByPublicName(String PublicName);
 
-    @Query("insert into \"UserInfo\"(\"UserId\",\"PrivateName\",\"PublicName\",\"Age\",\"Gender\",\"Location\",\"Password\")values(:UserId,:PrivateName,:PublicName,:Age,:Gender,:Location,:Password)")
-    Mono<UserInfo> insert(String UserId,String PrivateName,String PublicName,int Age,String Gender,long Location,String Password);
+    @Query("insert into \"UserInfo\"(\"UserId\",\"PrivateName\",\"PublicName\",\"Password\",\"Email\") values(:UserId,:PrivateName,LOWER(:PublicName),:Password,:Email) returning *")
+    Mono<UserInfo> insert(String UserId, String PrivateName, String PublicName, String Password, String Email);
     
     @Query("select * from \"UserInfo\" order by \"UserId\" desc limit 1")
     Mono<UserInfo> findlastuser();
@@ -26,7 +28,7 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
     @Override
     Flux<UserInfo> findAll();
 
-    @Query("update  \"UserInfo\" set \"UserProfilePath\"=:Filename where \"UserId\"=:UserId ")
+    @Query("update \"UserInfo\" set \"UserProfilePath\"=:Filename where \"UserId\"=:UserId ")
     Mono<UserInfo> updateprofile(String Filename,String UserId);
 
     @Query("select \"PublicName\" from \"UserInfo\" where \"UserId\"=:UserId")
@@ -64,11 +66,11 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
         @Query("select * from \"UserInfo\" where \"Email\"=:email limit 1")
         Mono<UserInfo> findByEmail(String email);
 
-        @Query("select * from \"UserInfo\" where \"UserId\"=:identifier or \"Email\"=:identifier or \"PublicName\"=:identifier limit 1")
+        @Query("select * from \"UserInfo\" where \"UserId\"=:identifier or \"Email\"=:identifier or LOWER(\"PublicName\")=LOWER(:identifier) limit 1")
         Mono<UserInfo> findByIdentifier(String identifier);
 
-        @Query("insert into \"UserInfo\"(\"UserId\",\"PrivateName\",\"PublicName\",\"Age\",\"Gender\",\"Location\",\"Password\",\"Email\") values(:UserId,:PrivateName,:PublicName,:Age,:Gender,:Location,:Password,:Email) returning *")
-        Mono<UserInfo> insertWithEmail(String UserId, String PrivateName, String PublicName, int Age, String Gender, long Location, String Password, String Email);
+        @Query("insert into \"UserInfo\"(\"UserId\",\"PrivateName\",\"PublicName\",\"Password\",\"Email\") values(:UserId,:PrivateName,LOWER(:PublicName),:Password,:Email) returning *")
+        Mono<UserInfo> insertWithEmail(String UserId, String PrivateName, String PublicName, String Password, String Email);
 
         @Query("update \"UserInfo\" set \"Password\"=:newPassword where \"UserId\"=:identifier or \"Email\"=:identifier returning *")
         Mono<UserInfo> updatePassword(String identifier, String newPassword);
@@ -77,55 +79,40 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
         Mono<UserInfo> update2FAStatus(String userId, boolean enabled);
 
         @Query("""
+            UPDATE "UserInfo"
+            SET "PrivateName" = :displayName,
+                "LastDisplayNameChangeAt" = :now
+            WHERE "UserId" = :userId
+              AND ("LastDisplayNameChangeAt" IS NULL OR "LastDisplayNameChangeAt" <= :cooldownThreshold)
+            RETURNING *
+            """)
+        Mono<UserInfo> updateDisplayNameAtomic(String displayName, LocalDateTime now, LocalDateTime cooldownThreshold, String userId);
+
+        @Query("""
             SELECT EXISTS (
                 SELECT 1 FROM "UserInfo" 
-                WHERE (LOWER("PublicName") = :name OR LOWER("PrivateName") = :name OR LOWER("RoomNickName") = :name)
-                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
-                UNION ALL
-                SELECT 1 FROM "UserChat" 
-                WHERE LOWER("UserName") = :name
+                WHERE LOWER("PublicName") = LOWER(:name)
                   AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
             )
             """)
         Mono<Boolean> existsExactName(String name, String excludeUserId);
 
         @Query("""
-            SELECT DISTINCT name FROM (
-                SELECT "PublicName" AS name FROM "UserInfo" 
-                WHERE (LOWER("PublicName") LIKE :prefix1 || '%' OR LOWER("PublicName") LIKE :prefix2 || '%')
-                  AND LENGTH("PublicName") BETWEEN :minLen AND :maxLen
-                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
-
-                UNION
-
-                SELECT "PrivateName" AS name FROM "UserInfo" 
-                WHERE (LOWER("PrivateName") LIKE :prefix1 || '%' OR LOWER("PrivateName") LIKE :prefix2 || '%')
-                  AND LENGTH("PrivateName") BETWEEN :minLen AND :maxLen
-                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
-
-                UNION
-
-                SELECT "RoomNickName" AS name FROM "UserInfo" 
-                WHERE "RoomNickName" IS NOT NULL 
-                  AND (LOWER("RoomNickName") LIKE :prefix1 || '%' OR LOWER("RoomNickName") LIKE :prefix2 || '%')
-                  AND LENGTH("RoomNickName") BETWEEN :minLen AND :maxLen
-                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
-
-                UNION
-
-                SELECT "UserName" AS name FROM "UserChat" 
-                WHERE "UserName" IS NOT NULL 
-                  AND (LOWER("UserName") LIKE :prefix1 || '%' OR LOWER("UserName") LIKE :prefix2 || '%')
-                  AND LENGTH("UserName") BETWEEN :minLen AND :maxLen
-                  AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
-            ) AS candidate_names
+            SELECT DISTINCT "PublicName" AS name FROM "UserInfo" 
+            WHERE (LOWER("PublicName") LIKE :prefix1 || '%' OR LOWER("PublicName") LIKE :prefix2 || '%')
+              AND LENGTH("PublicName") BETWEEN :minLen AND :maxLen
+              AND (:excludeUserId IS NULL OR "UserId" != :excludeUserId)
             """)
         Flux<String> findSimilarCandidates(String prefix1, String prefix2, int minLen, int maxLen, String excludeUserId);
 
-    @Query("SELECT * FROM \"UserInfo\" WHERE \"BookingSlug\" = :slug OR \"UserId\" = :slug OR \"PublicName\" = :slug LIMIT 1")
+    @Query("SELECT * FROM \"UserInfo\" WHERE \"BookingSlug\" = :slug OR \"UserId\" = :slug OR LOWER(\"PublicName\") = LOWER(:slug) LIMIT 1")
     Mono<UserInfo> findByBookingSlugOrUser(String slug);
 
     @Modifying
     @Query("UPDATE \"UserInfo\" SET \"ShowBusySlotsExternal\" = :showBusySlots WHERE \"UserId\" = :userId")
     Mono<Integer> updateShowBusySlots(String userId, Boolean showBusySlots);
+
+    @Modifying
+    @Query("UPDATE \"UserInfo\" SET \"IsBookingEnabled\" = :isBookingEnabled WHERE \"UserId\" = :userId")
+    Mono<Integer> updateIsBookingEnabled(String userId, Boolean isBookingEnabled);
 }

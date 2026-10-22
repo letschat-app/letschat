@@ -1,98 +1,67 @@
 package com.letschat.mvp_1.DTOs;
 
 public class UserSignUpDTO {
-    private String PrivateName;
-    private String PublicName;
-    private int Age;
-    private String Gender;
-    private String StateName;
-    private String DistrictName;
-    private String VillageName;
+    private String PrivateName; // DisplayName
+    private String PublicName;  // Username
     private String Password;
+    private String Email;
+    private String Otp;
 
     public UserSignUpDTO(){}
 
-    public UserSignUpDTO(String PrivateName,String PublicName,int Age,String Gender,String StateName,String DistrictName,String VillageName,String Password){
-        this.PrivateName=PrivateName;
-        this.PublicName=PublicName;
-        this.Age=Age;
-        this.Gender=Gender;
-        this.StateName=StateName;
-        this.DistrictName=DistrictName;
-        this.VillageName=VillageName;
-        this.Password=Password;
+    public UserSignUpDTO(String PrivateName, String PublicName, String Password, String Email){
+        this.PrivateName = PrivateName;
+        this.PublicName = PublicName;
+        this.Password = Password;
+        this.Email = Email;
     }
 
     public String getPrivateName(){
         return PrivateName;
     }
     public void setPrivateName(String PrivateName){
-        this.PrivateName=PrivateName;
+        this.PrivateName = PrivateName;
+    }
+
+    public String getDisplayName() {
+        return PrivateName;
+    }
+    public void setDisplayName(String displayName) {
+        this.PrivateName = displayName;
     }
 
     public String getPublicName(){
         return PublicName;
     }
     public void setPublicName(String PublicName){
-        this.PublicName=PublicName;
+        this.PublicName = PublicName != null ? PublicName.trim().toLowerCase() : null;
     }
 
-    public int getAge(){
-        return Age;
+    public String getUsername() {
+        return PublicName;
     }
-    public void setAge(int Age){
-        this.Age=Age;
-    }
-
-    public String getGender(){
-        return Gender;
-    }
-    public void setGender(String Gender){
-        this.Gender=Gender;
-    }
-
-    public String getStateName(){
-        return StateName;
-    }
-    public void setStateName(String StateName){
-        this.StateName=StateName;
-    }
-
-    public String getDistrictName(){
-        return DistrictName;
-    }
-    public void setDistrictName(String DistrictName){
-        this.DistrictName=DistrictName;
-    }
-
-    public String getVillageName(){
-        return VillageName;
-    }
-    public void setVillageName(String VillageName){
-        this.VillageName=VillageName;
+    public void setUsername(String username) {
+        this.PublicName = username != null ? username.trim().toLowerCase() : null;
     }
 
     public String getPassword(){
         return Password;
     }
     public void setPassword(String Password){
-        this.Password=Password;
+        this.Password = Password;
     }
-
-    private String Email;
-    private String Otp;
 
     public String getEmail(){
         return Email;
     }
     public void setEmail(String Email){
-        this.Email=Email;
+        this.Email = Email;
     }
 
     public String getOtp(){
         return Otp;
     }
     public void setOtp(String Otp){
-        this.Otp=Otp;
+        this.Otp = Otp;
     }
 }

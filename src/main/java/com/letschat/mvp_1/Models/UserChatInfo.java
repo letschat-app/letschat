@@ -36,6 +36,12 @@ public class UserChatInfo {
     @Column("IsMuted")
     private Boolean IsMuted;
 
+    @Column("IsCustomName")
+    private Boolean isCustomName = false;
+
+    @Column("IsCustomProfile")
+    private Boolean isCustomProfile = false;
+
     public UserChatInfo(){}
     public UserChatInfo(Long Id,String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,String Status,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile){
         this.Id=Id;
@@ -143,4 +149,17 @@ public class UserChatInfo {
         this.IsMuted=IsMuted;
     }
 
+    public Boolean getIsCustomName() {
+        return isCustomName != null && isCustomName;
+    }
+    public void setIsCustomName(Boolean isCustomName) {
+        this.isCustomName = isCustomName;
+    }
+
+    public Boolean getIsCustomProfile() {
+        return isCustomProfile != null && isCustomProfile;
+    }
+    public void setIsCustomProfile(Boolean isCustomProfile) {
+        this.isCustomProfile = isCustomProfile;
+    }
 }

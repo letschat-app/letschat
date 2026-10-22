@@ -42,11 +42,19 @@ public class GroupAddService {
         .flatMap(user -> {
             return userChatInfoRepo.findByChatId(group.getChatId())
             .flatMap(chat -> {
+                String defaultName = user.getPublicName();
+                if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
+                    if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
+                        defaultName = user.getPrivateName().trim();
+                    }
+                }
+                final String initialName = defaultName;
+
                 return userChatInfoRepo.insert(
                         chat.getChatId(),
                         user.getUserId(),
                         group.getGroupName(),
-                        user.getPublicName(),
+                        initialName,
                         now,
                         now,
                         "group",
@@ -58,7 +66,7 @@ public class GroupAddService {
                     myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
                 ))
                 .then(
-                    myWebSocketHandler.announce(chat.getChatId(), "added", user.getPublicName(),AdminName,AdminId)
+                    myWebSocketHandler.announce(chat.getChatId(), "added", initialName, AdminName, AdminId)
                 )
                 .then(groupInfoRepo.updatemembers(GroupId, group.getNoOfMembers() + 1))
                 .thenReturn("added");
@@ -80,24 +88,31 @@ public class GroupAddService {
                 .flatMap(chat->{
                     return userChatInfoRepo.joinedOrNot(chat.getChatId(), UserId)
                     .flatMap(chatid->Mono.just(chatid))
-                    .switchIfEmpty(
-                     userChatInfoRepo.insert(
-                        chat.getChatId(),
-                        user.getUserId(),
-                        room.getRoomName(),
-                        user.getPublicName(),
-                        now,
-                        now,
-                        "classroom",
-                        "student",
-                        null,
-                        user.getUserProfilePath()
-                    )
-                .then(Mono.fromRunnable(() ->
-                    myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
-                ))
-                .then(classRoomRepo.updateCount(RoomId, room.getNoOfStudents() + 1).then())
-                .thenReturn(chat.getChatId()));
+                    .switchIfEmpty(Mono.defer(() -> {
+                        String defaultName = user.getPublicName();
+                        if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
+                            if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
+                                defaultName = user.getPrivateName().trim();
+                            }
+                        }
+                        return userChatInfoRepo.insert(
+                            chat.getChatId(),
+                            user.getUserId(),
+                            room.getRoomName(),
+                            defaultName,
+                            now,
+                            now,
+                            "classroom",
+                            "student",
+                            null,
+                            user.getUserProfilePath()
+                        )
+                        .then(Mono.fromRunnable(() ->
+                            myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
+                        ))
+                        .then(classRoomRepo.updateCount(RoomId, room.getNoOfStudents() + 1).then())
+                        .thenReturn(chat.getChatId());
+                    }));
                 });
             });
         })

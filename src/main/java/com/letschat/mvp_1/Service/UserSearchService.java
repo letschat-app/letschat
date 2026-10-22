@@ -32,7 +32,10 @@ public class UserSearchService {
     private Mono<UserSearchResult> buildSearchResult(UserInfo user) {
         UserSearchResult dto = new UserSearchResult();
         dto.setUserId(user.getUserId());
-        dto.setUserName(user.getPublicName());
+        dto.setUserName(user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty() ? user.getPrivateName() : user.getPublicName());
+        dto.setUsername(user.getPublicName());
+        dto.setDisplayName(user.getPrivateName());
+        dto.setLastDisplayNameChangeAt(user.getLastDisplayNameChangeAt());
         dto.setProfile(user.getUserProfilePath());
 
         Mono<Integer> streakMono = userPulseStreakRepo.findById(user.getUserId())

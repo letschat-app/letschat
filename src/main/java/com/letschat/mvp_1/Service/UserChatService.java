@@ -3,7 +3,9 @@ package com.letschat.mvp_1.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.letschat.mvp_1.DTOs.UserSearchResult;
 import com.letschat.mvp_1.Models.ChatSpace;
@@ -85,24 +87,25 @@ public class UserChatService {
              .switchIfEmpty(
              generateId()
             .flatMap(chatid->{
-                UserChatInfo sendchat=new UserChatInfo();
-                sendchat.setChatId(chatid);
-                sendchat.setUserId(SenderId);
-                sendchat.setChatName(receiveuser.getPublicName());
-                sendchat.setUserName(senduser.getPublicName());
-                sendchat.setAt(now);
-                sendchat.setVisited(now);
+                String senderInitialName = senduser.getPublicName();
+                if (senduser.getPrivateName() != null && !senduser.getPrivateName().trim().isEmpty()) {
+                    if (UsernameSimilarityEvaluator.computeSelfSimilarity(senduser.getPublicName(), senduser.getPrivateName()) >= 3.0) {
+                        senderInitialName = senduser.getPrivateName().trim();
+                    }
+                }
 
-                UserChatInfo recievechat=new UserChatInfo();
-                recievechat.setChatId(chatid);
-                recievechat.setUserId(RecieverId);
-                recievechat.setChatName(senduser.getPublicName());
-                recievechat.setUserName(receiveuser.getPublicName());
-                recievechat.setAt(now);
-                recievechat.setVisited(now);
+                String receiverInitialName = receiveuser.getPublicName();
+                if (receiveuser.getPrivateName() != null && !receiveuser.getPrivateName().trim().isEmpty()) {
+                    if (UsernameSimilarityEvaluator.computeSelfSimilarity(receiveuser.getPublicName(), receiveuser.getPrivateName()) >= 3.0) {
+                        receiverInitialName = receiveuser.getPrivateName().trim();
+                    }
+                }
 
-                return userChatInfoRepo.insert(chatid, SenderId, receiveuser.getPublicName(), senduser.getPublicName(), now, now,"private",null,receiveuser.getUserProfilePath(),senduser.getUserProfilePath())
-                .then(userChatInfoRepo.insert(chatid, RecieverId, senduser.getPublicName(), receiveuser.getPublicName(), now, now,"private",null,senduser.getUserProfilePath(),receiveuser.getUserProfilePath()))
+                String senderDisplayTitle = receiveuser.getPrivateName() != null && !receiveuser.getPrivateName().trim().isEmpty() ? receiveuser.getPrivateName() : receiveuser.getPublicName();
+                String receiverDisplayTitle = senduser.getPrivateName() != null && !senduser.getPrivateName().trim().isEmpty() ? senduser.getPrivateName() : senduser.getPublicName();
+
+                return userChatInfoRepo.insert(chatid, SenderId, senderDisplayTitle, senderInitialName, now, now,"private",null,receiveuser.getUserProfilePath(),senduser.getUserProfilePath())
+                .then(userChatInfoRepo.insert(chatid, RecieverId, receiverDisplayTitle, receiverInitialName, now, now,"private",null,senduser.getUserProfilePath(),receiveuser.getUserProfilePath()))
                 .thenReturn(chatid);
             }));
         });
@@ -161,51 +164,70 @@ public class UserChatService {
         });
     }
 public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
+    if (info == null || info.getUserId() == null) {
+        return Mono.just("failed");
+    }
 
-    return userChatInfoRepo.findTypeByChatId(Chatid)
-        .flatMap(type -> {
+    return userInfoRepo.findByUserId(info.getUserId())
+        .flatMap(user -> {
+            String proposedName = info.getUserName() != null ? info.getUserName().trim() : null;
 
-            System.out.println(info.getUserName());
-            System.out.println(type);
+            Mono<Void> validationMono = Mono.empty();
+            if (proposedName != null && !proposedName.isEmpty()) {
+                // 1. Self-similarity check (>= 3.0 out of 10)
+                double selfSim = UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), proposedName);
+                if (selfSim < 3.0) {
+                    return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chat name must have at least 3/10 similarity with your permanent username (@" + user.getPublicName() + ")"));
+                }
 
-            return userChatInfoRepo.getUsername(Chatid, info.getUserId())
-                .defaultIfEmpty("")
-                .flatMap(oldName -> {
-                    boolean nameChanged = !oldName.isEmpty() && !oldName.equals(info.getUserName());
+                // 2. Peer collision & confusion check (< 8.0 out of 10)
+                validationMono = userChatInfoRepo.findPeerUserNames(Chatid, info.getUserId())
+                    .filter(peer -> peer != null && !peer.trim().isEmpty())
+                    .flatMap(peer -> {
+                        double peerSim = UsernameSimilarityEvaluator.computePeerSimilarity(proposedName, peer.trim());
+                        if (peerSim >= 8.0) {
+                            return Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "Chat name is too similar to participant '" + peer + "' in this chat (similarity: " + peerSim + "/10). It must be below 8/10."));
+                        }
+                        return Mono.empty();
+                    })
+                    .then();
+            }
 
-                    Mono<Void> announceMono = nameChanged
-                        ? myWebSocketHandler.announce(Chatid, "username_change", oldName, info.getUserName(), info.getUserId())
-                        : Mono.empty();
+            return validationMono.then(userChatInfoRepo.findTypeByChatId(Chatid)
+                .flatMap(type -> {
+                    return userChatInfoRepo.getUsername(Chatid, info.getUserId())
+                        .defaultIfEmpty("")
+                        .flatMap(oldName -> {
+                            boolean nameChanged = proposedName != null && !oldName.isEmpty() && !oldName.equals(proposedName);
 
-                    Mono<Void> updateUsername =
-                        userChatInfoRepo.updateUsername(info.getUserName(), info.getProfile(), Chatid, info.getUserId())
-                        .then(Mono.fromRunnable(() ->
-                            myWebSocketHandler.updateUsernameCache(
-                                Chatid,
-                                info.getUserId(),
-                                info.getUserName()
-                            )
-                        ))
-                        .then(announceMono);
+                            boolean isCustomName = proposedName != null && (user.getPrivateName() == null || !proposedName.equals(user.getPrivateName().trim()));
+                            boolean isCustomProfile = info.getProfile() != null && (user.getUserProfilePath() == null || !info.getProfile().equals(user.getUserProfilePath()));
 
-                    if ("private".equals(type)) {
+                            Mono<Void> announceMono = nameChanged
+                                ? myWebSocketHandler.announce(Chatid, "username_change", oldName, proposedName, info.getUserId())
+                                : Mono.empty();
 
-                        return updateUsername
-                                .then(userChatInfoRepo.updateChatname(
-                                    info.getUserName(),
-                                    info.getProfile(),
-                                    Chatid,
-                                    info.getUserId()
-                                ))
-                                .thenReturn("ok");
+                            Mono<Void> updateUsername =
+                                userChatInfoRepo.updateCustomChatInfo(proposedName, info.getProfile(), isCustomName, isCustomProfile, Chatid, info.getUserId())
+                                .then(Mono.fromRunnable(() -> {
+                                    if (proposedName != null) {
+                                        myWebSocketHandler.updateUsernameCache(Chatid, info.getUserId(), proposedName);
+                                    }
+                                }))
+                                .then(announceMono);
 
-                    } else {
-
-                        return updateUsername
-                                .thenReturn("ok");
-                    }
-                });
+                            if ("private".equals(type)) {
+                                return updateUsername
+                                    .then(userChatInfoRepo.updateChatname(proposedName, info.getProfile(), Chatid, info.getUserId()))
+                                    .thenReturn("ok");
+                            } else {
+                                return updateUsername.thenReturn("ok");
+                            }
+                        });
+                }));
         })
+        .onErrorResume(org.springframework.dao.DuplicateKeyException.class, e -> 
+            Mono.error(new ResponseStatusException(HttpStatus.CONFLICT, "This name is already taken in this chat.")))
         .switchIfEmpty(Mono.just("failed"));
 }
 

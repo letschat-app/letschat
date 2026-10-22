@@ -21,28 +21,28 @@ public interface UserChatInfoRepo extends ReactiveCrudRepository<UserChatInfo, L
     @Query("select * from \"UserChat\" order by \"ChatId\" desc limit 1")
     Mono<UserChatInfo> findlastuser();
 
-    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\",\"IsMuted\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile, false) returning *")
+    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\",\"IsMuted\",\"IsCustomName\",\"IsCustomProfile\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile, false, false, false) returning *")
     Mono<UserChatInfo> insert(String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile);
 
-    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\",\"IsMuted\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile, COALESCE(:IsMuted, false)) returning *")
+    @Query("INSERT INTO \"UserChat\" (\"ChatId\", \"UserId\",\"ChatName\", \"UserName\", \"At\", \"Visited\",\"Type\",\"Role\",\"ChatProfile\",\"UserProfile\",\"IsMuted\",\"IsCustomName\",\"IsCustomProfile\") VALUES (:ChatId, :UserId, :ChatName, :UserName, :At, :Visited,:Type,:Role,:ChatProfile,:UserProfile, COALESCE(:IsMuted, false), false, false) returning *")
     Mono<UserChatInfo> insertWithMute(String ChatId,String UserId,String ChatName,String UserName,LocalDateTime At,LocalDateTime Visited,String Type,String Role,String ChatProfile,String UserProfile,Boolean IsMuted);
 
     @Query("select * from \"UserChat\" where \"UserId\"=:UserId and (\"ChatName\"=:UserName1 or \"ChatName\"=:UserName2) limit 1")
     Mono<UserChatInfo> findIfExist(String UserId,String UserName1,String UserName2);
 
     @Query("""
-            select uc1."ChatId" as ChatId,ui."UserId" as Id,uc1."ChatName" as ChatName,uc1."Type" as Type,uc1."Status" as Status,uc1."At" as timestamp,uc1."ChatProfile" as "Profile", COALESCE(uc1."IsMuted", false) as isMuted from "UserChat" uc1 join "UserChat" uc2 on uc1."ChatId"=uc2."ChatId"
+            select uc1."ChatId" as ChatId,ui."UserId" as Id,uc1."ChatName" as ChatName,uc1."Type" as Type,uc1."Status" as Status,uc1."At" as timestamp,uc1."ChatProfile" as "Profile", COALESCE(uc1."IsMuted", false) as isMuted, ui."PublicName" as username, ui."PrivateName" as displayName from "UserChat" uc1 join "UserChat" uc2 on uc1."ChatId"=uc2."ChatId"
 join "UserInfo" ui on ui."UserId"=uc2."UserId" where uc1."UserId"=:UserId and uc2."UserId"!=:UserId and uc1."Type"='private'
             """)
     Flux<ChatBoxReturnDTO> findUserChat(String UserId);
 
     @Query("""
-select user_chats."ChatId" as ChatId,gi."GroupId" as Id,gi."GroupName" as ChatName,gi."GroupProfilePath" as "Profile",user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role, COALESCE(user_chats."IsMuted", false) as isMuted from (select "ChatId","Type","At","Role","Status","IsMuted" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
+select user_chats."ChatId" as ChatId,gi."GroupId" as Id,gi."GroupName" as ChatName,gi."GroupProfilePath" as "Profile",gi."Motto" as motto,user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role, COALESCE(user_chats."IsMuted", false) as isMuted from (select "ChatId","Type","At","Role","Status","IsMuted" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
 As chat_min_ids on user_chats."ChatId"=chat_min_ids."ChatId" join "GroupInfo" gi on gi."ChatId"=chat_min_ids.min_id            """)
     Flux<ChatBoxReturnDTO> findGroupChat(String UserId);
 
     @Query("""
-select user_chats."ChatId" as ChatId,gi."room_id" as Id,gi."room_name" as ChatName,gi."room_profile" as "Profile",user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role, COALESCE(user_chats."IsMuted", false) as isMuted from (select "ChatId","Type","At","Role","Status","IsMuted" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
+select user_chats."ChatId" as ChatId,gi."room_id" as Id,gi."room_name" as ChatName,gi."room_profile" as "Profile",gi."description" as motto,gi."description" as description,user_chats."Type" as Type,user_chats."Status" as Status,user_chats."At" as timestamp,user_chats."Role" as Role, COALESCE(user_chats."IsMuted", false) as isMuted from (select "ChatId","Type","At","Role","Status","IsMuted" from "UserChat" where "UserId"=:UserId )As user_chats join(select "ChatId",MIN("Id") as min_id from "UserChat" group by "ChatId" )
 As chat_min_ids on user_chats."ChatId"=chat_min_ids."ChatId" join "ClassRoomInfo" gi on gi."chat_id"=chat_min_ids.min_id           
             """)
             Flux<ChatBoxReturnDTO> findClassRoomChat(String UserId);
@@ -84,6 +84,48 @@ group by "ChatId" having count(distinct "UserId")=2
                 update "UserChat" set "UserName"=:name, "UserProfile"=:Profile where "ChatId"=:chatid and "UserId"=:userid returning *
                         """)
         Mono<UserChatInfo> updateUsername(String name,String Profile,String chatid,String userid);
+
+        @Query("""
+                UPDATE "UserChat" 
+                SET "UserName" = COALESCE(:name, "UserName"), 
+                    "UserProfile" = COALESCE(:profile, "UserProfile"),
+                    "IsCustomName" = CASE WHEN :isCustomName IS NOT NULL THEN :isCustomName ELSE "IsCustomName" END,
+                    "IsCustomProfile" = CASE WHEN :isCustomProfile IS NOT NULL THEN :isCustomProfile ELSE "IsCustomProfile" END
+                WHERE "ChatId" = :chatId AND "UserId" = :userId
+                RETURNING *
+                """)
+        Mono<UserChatInfo> updateCustomChatInfo(String name, String profile, Boolean isCustomName, Boolean isCustomProfile, String chatId, String userId);
+
+        @Modifying
+        @Query("""
+                UPDATE "UserChat"
+                SET "UserName" = :newDisplayName
+                WHERE "UserId" = :userId
+                  AND ("IsCustomName" IS FALSE OR "IsCustomName" IS NULL)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM "UserChat" uc2 
+                      WHERE uc2."ChatId" = "UserChat"."ChatId" 
+                        AND uc2."UserId" != :userId 
+                        AND LOWER(REGEXP_REPLACE(uc2."UserName", '\\s+', '', 'g')) = LOWER(REGEXP_REPLACE(:newDisplayName, '\\s+', '', 'g'))
+                        AND (uc2."Status" = 'allowed' OR uc2."Status" IS NULL)
+                  )
+                """)
+        Mono<Integer> propagateDisplayName(String userId, String newDisplayName);
+
+        @Modifying
+        @Query("""
+                UPDATE "UserChat"
+                SET "UserProfile" = :newProfilePath
+                WHERE "UserId" = :userId
+                  AND ("IsCustomProfile" IS FALSE OR "IsCustomProfile" IS NULL)
+                """)
+        Mono<Integer> propagateProfilePicture(String userId, String newProfilePath);
+
+        @Query("""
+                SELECT "UserName" FROM "UserChat" 
+                WHERE "ChatId" = :chatId AND "UserId" != :excludeUserId AND ("Status" = 'allowed' OR "Status" IS NULL)
+                """)
+        Flux<String> findPeerUserNames(String chatId, String excludeUserId);
 
         @Query("""
                 update "UserChat" set "ChatName"=:name,"ChatProfile"=:Profile where "ChatId"=:chatid and "UserId"!=:userid returning *

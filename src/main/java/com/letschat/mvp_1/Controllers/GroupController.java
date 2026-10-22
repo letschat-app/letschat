@@ -35,8 +35,14 @@ public class GroupController {
     }
 
     @PostMapping("/create/{GroupName0}")
-    public Mono<ResponseEntity<String>> creategroup(@PathVariable String GroupName0,@RequestHeader("User-Id") String UserId,@RequestHeader("Group-Name") String GroupName){
-        return groupCreateService.creategroup(UserId, GroupName)
+    public Mono<ResponseEntity<String>> creategroup(
+            @PathVariable String GroupName0,
+            @RequestHeader("User-Id") String UserId,
+            @RequestHeader("Group-Name") String GroupName,
+            @RequestHeader(value = "Group-Motto", required = false) String GroupMotto,
+            @RequestBody(required = false) java.util.Map<String, String> body){
+        String effectiveMotto = (body != null && body.get("motto") != null) ? body.get("motto") : GroupMotto;
+        return groupCreateService.creategroup(UserId, GroupName, effectiveMotto)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed"))); 
     }

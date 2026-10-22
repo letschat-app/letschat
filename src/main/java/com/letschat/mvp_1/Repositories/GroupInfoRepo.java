@@ -13,7 +13,10 @@ import reactor.core.publisher.Mono;
 
 public interface GroupInfoRepo extends ReactiveCrudRepository<GroupInfoModel, String>{
     
-    @Query("insert into \"GroupInfo\" (\"GroupId\",\"GroupName\",\"CreatedBy\",\"ChatId\")values(:GroupId,:GroupName,:CreatedBy,:ChatId) returning *")
+    @Query("insert into \"GroupInfo\" (\"GroupId\",\"GroupName\",\"CreatedBy\",\"ChatId\",\"Motto\") values (:GroupId,:GroupName,:CreatedBy,:ChatId,:Motto) returning *")
+    Mono<GroupInfoModel> insertWithMotto(String GroupId,String GroupName,String CreatedBy,Long ChatId,String Motto);
+
+    @Query("insert into \"GroupInfo\" (\"GroupId\",\"GroupName\",\"CreatedBy\",\"ChatId\") values (:GroupId,:GroupName,:CreatedBy,:ChatId) returning *")
     Mono<GroupInfoModel> insert(String GroupId,String GroupName,String CreatedBy,Long ChatId);
 
     @Query("select * from \"GroupInfo\" order by \"GroupId\" desc limit 1")

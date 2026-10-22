@@ -27,14 +27,20 @@ public class ClassRoomService {
         this.idTableRepo=idTableRepo;
     }
 
-    public Mono<String> create(String Userid,String roomname){
+    public Mono<String> create(String Userid,String roomname,String motto){
        // ClassRoomInfo classRoomInfo = new ClassRoomInfo();
        System.out.println("rooming");
         return userInfoRepo.findByUserId(Userid)
         .flatMap(user -> generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            return userChatInfoRepo.insert(chatid, user.getUserId(), roomname, user.getPrivateName(), now, now,"classroom","faculty",null,user.getUserProfilePath())
+            String defaultName = user.getPublicName();
+            if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
+                if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
+                    defaultName = user.getPrivateName().trim();
+                }
+            }
+            return userChatInfoRepo.insert(chatid, user.getUserId(), roomname, defaultName, now, now,"classroom","faculty",null,user.getUserProfilePath())
             .flatMap(chat-> generateRoomId()
             .doOnNext(roomid->System.out.println("inside"+chat.getChatId()))
             .flatMap(roomid->{
@@ -44,6 +50,7 @@ public class ClassRoomService {
                 classRoomInfo.setFaculty(user.getUserId());
                 classRoomInfo.setNoOfStudents(0L);
                 classRoomInfo.setRoomName(roomname);
+                classRoomInfo.setDescription(motto != null && !motto.trim().isEmpty() ? motto.trim() : null);
                 return classRoomRepo.save(classRoomInfo)
                 .thenReturn(chatid);
             })
@@ -52,8 +59,14 @@ public class ClassRoomService {
         .switchIfEmpty(Mono.just("failed"));
     }
 
+    public Mono<String> create(String Userid,String roomname){
+        return create(Userid, roomname, null);
+    }
+
     public Mono<String> update(String GroupId,ChatBoxReturnDTO info){
-        return classRoomRepo.update(info.getChatName(), info.getProfile(), GroupId)
+        String motto = (info.getMotto() != null && !info.getMotto().trim().isEmpty()) ? info.getMotto().trim() : 
+                       ((info.getDescription() != null && !info.getDescription().trim().isEmpty()) ? info.getDescription().trim() : null);
+        return classRoomRepo.updateWithDescription(info.getChatName(), info.getProfile(), motto, GroupId)
         .flatMap(info1->Mono.just("updated"));
     }
 

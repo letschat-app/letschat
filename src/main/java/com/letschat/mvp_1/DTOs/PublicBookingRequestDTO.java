@@ -11,6 +11,7 @@ public class PublicBookingRequestDTO {
     private String meetingType; // "online" or "offline"
     private String meetingLink;
     private String location;
+    private String guestUserId;
 
     public PublicBookingRequestDTO() {}
 
@@ -37,4 +38,7 @@ public class PublicBookingRequestDTO {
 
     public String getLocation() { return location; }
     public void setLocation(String location) { this.location = location; }
+
+    public String getGuestUserId() { return guestUserId; }
+    public void setGuestUserId(String guestUserId) { this.guestUserId = guestUserId; }
 }

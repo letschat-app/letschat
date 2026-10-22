@@ -30,23 +30,39 @@ public class GroupCreateService {
         this.myWebSocketHandler=myWebSocketHandler;
     }
 
-    public Mono<String> creategroup(String UserId,String GroupName){
+    public Mono<String> creategroup(String UserId,String GroupName,String motto){
         System.out.println("grouping");
         return userInfoRepo.findByUserId(UserId)
         .flatMap(user->generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, user.getPrivateName(), now, now,"group","admin",null,user.getUserProfilePath())
+            String defaultName = user.getPublicName();
+            if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
+                if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
+                    defaultName = user.getPrivateName().trim();
+                }
+            }
+            final String initialChatName = defaultName;
+            return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, initialChatName, now, now,"group","admin",null,user.getUserProfilePath())
             .flatMap(chat->{ return generateGroupId()
             .doOnNext(groupid->System.out.println("inside"+chat.getChatId()))
             .flatMap(groupid->{
-                return groupInfoRepo.insert(groupid, GroupName, user.getUserId(), chat.getId())
-                .then(myWebSocketHandler.announce(chatid,"created",GroupName,user.getPrivateName(),UserId))
+                String cleanMotto = (motto != null && !motto.trim().isEmpty()) ? motto.trim() : null;
+                Mono<?> insertMono = (cleanMotto != null)
+                    ? groupInfoRepo.insertWithMotto(groupid, GroupName, user.getUserId(), chat.getId(), cleanMotto)
+                    : groupInfoRepo.insert(groupid, GroupName, user.getUserId(), chat.getId());
+
+                return insertMono
+                .then(myWebSocketHandler.announce(chatid,"created",GroupName,initialChatName,UserId))
                 .thenReturn(chatid+","+groupid);
             });})
             .doOnNext(chat->System.out.println("outside"+chat));
         }))
         .switchIfEmpty(Mono.just("failed"));
+    }
+
+    public Mono<String> creategroup(String UserId,String GroupName){
+        return creategroup(UserId, GroupName, null);
     }
 
     public Mono<String> updategroup(String GroupId, ChatBoxReturnDTO info) {
@@ -160,14 +176,22 @@ public class GroupCreateService {
 
     public Flux<UserSearchResult> getMembers(String chatid){
         return groupInfoRepo.getMembers(chatid)
-        .flatMap(user->{
-            UserSearchResult User=new UserSearchResult();
-            User.setUserId(user.getUserId());
-            User.setUserName(user.getUserName());
-            User.setRole(user.getRole());
-            return Mono.just(User);
-        })
-        .doOnNext(members->System.out.println(members.getUserName()));
+        .flatMap(userChat -> {
+            UserSearchResult user = new UserSearchResult();
+            user.setUserId(userChat.getUserId());
+            user.setUserName(userChat.getUserName());
+            user.setRole(userChat.getRole());
+            user.setProfile(userChat.getUserProfile());
+
+            return userInfoRepo.findByUserId(userChat.getUserId())
+                .map(u -> {
+                    user.setUsername(u.getPublicName());
+                    user.setDisplayName(u.getPrivateName());
+                    user.setLastDisplayNameChangeAt(u.getLastDisplayNameChangeAt());
+                    return user;
+                })
+                .defaultIfEmpty(user);
+        });
     }
 
     

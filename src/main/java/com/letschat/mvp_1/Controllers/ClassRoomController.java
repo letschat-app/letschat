@@ -61,8 +61,15 @@ public class ClassRoomController {
     }
 
     @PostMapping("/create/{name}")
-    public Mono<ResponseEntity<String>> create(@PathVariable String name,@RequestHeader("User-Id") String UserId){
-        return classRoomService.create(UserId, name)
+    public Mono<ResponseEntity<String>> create(
+            @PathVariable String name,
+            @RequestHeader("User-Id") String UserId,
+            @RequestHeader(value = "Class-Motto", required = false) String ClassMotto,
+            @RequestBody(required = false) Map<String, String> body){
+        String effectiveMotto = (body != null && (body.get("motto") != null || body.get("description") != null))
+            ? (body.get("motto") != null ? body.get("motto") : body.get("description"))
+            : ClassMotto;
+        return classRoomService.create(UserId, name, effectiveMotto)
         .map(message->ResponseEntity.ok(message))
         .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed"))); 
     }

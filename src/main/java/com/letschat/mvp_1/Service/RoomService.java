@@ -40,7 +40,13 @@ public class RoomService {
         .flatMap(user->generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            return userChatInfoRepo.insert(chatid, user.getUserId(), Roomname, user.getPrivateName(), now, now,"room","admin",null,user.getUserProfilePath())
+            String defaultName = user.getPublicName();
+            if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
+                if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
+                    defaultName = user.getPrivateName().trim();
+                }
+            }
+            return userChatInfoRepo.insert(chatid, user.getUserId(), Roomname, defaultName, now, now,"room","admin",null,user.getUserProfilePath())
             .flatMap(chat->{
                 return generateGroupId()
                 .flatMap(roomid->{

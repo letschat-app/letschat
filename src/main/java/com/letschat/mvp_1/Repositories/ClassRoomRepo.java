@@ -82,7 +82,12 @@ ORDER BY mi."Time" Desc limit 1
 
 
       @Query("""
-          update "ClassRoomInfo" set "room_name"=:name , "room_profile"=:profile where "room_id"=:id returning *
+          update "ClassRoomInfo" set "room_name"=COALESCE(:name, "room_name") , "room_profile"=COALESCE(:profile, "room_profile"), "description"=COALESCE(:description, "description") where "room_id"=:id returning *
           """)
-          Mono<ClassRoomInfo> update(String name,String profile,String room_id);
+          Mono<ClassRoomInfo> updateWithDescription(String name, String profile, String description, String id);
+
+      @Query("""
+          update "ClassRoomInfo" set "room_name"=COALESCE(:name, "room_name") , "room_profile"=COALESCE(:profile, "room_profile") where "room_id"=:id returning *
+          """)
+          Mono<ClassRoomInfo> update(String name,String profile,String id);
 }
