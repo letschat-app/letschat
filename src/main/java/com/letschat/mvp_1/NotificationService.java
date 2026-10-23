@@ -522,4 +522,29 @@ public class NotificationService {
             System.out.println("[ASSIGNMENT] error: " + e.getMessage());
         }
     }
+
+    public void sendEventChange(String userId, String eventId, String title, String changeSummary, String startTime) {
+        if (userId == null || userId.isEmpty()) return;
+        getTokens(userId)
+                .flatMap(token ->
+                        Mono.fromRunnable(() -> {
+                            try {
+                                Map<String, String> data = new HashMap<>();
+                                data.put("type", "EVENT_CHANGED");
+                                data.put("eventId", eventId != null ? eventId : "");
+                                data.put("title", title != null ? ("Event Updated: " + title) : "Event Details Changed");
+                                data.put("changeSummary", changeSummary != null ? changeSummary : "Event details have been updated.");
+                                data.put("startTime", startTime != null ? startTime : "");
+
+                                FirebaseMessaging.getInstance()
+                                        .send(Message.builder().putAllData(data).setToken(token).build());
+
+                                System.out.println("[EVENT_CHANGED] sent to " + userId + " for event " + eventId);
+                            } catch (Exception e) {
+                                System.out.println("[EVENT_CHANGED] error: " + e);
+                            }
+                        }).subscribeOn(Schedulers.boundedElastic())
+                )
+                .subscribe(null, e -> System.out.println("[EVENT_CHANGED] subscription error: " + e));
+    }
 }

@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.letschat.mvp_1.NotificationService;
 import com.letschat.mvp_1.DTOs.*;
 import com.letschat.mvp_1.Models.EventInfo;
 import com.letschat.mvp_1.Models.UserInfo;
@@ -28,6 +29,7 @@ public class EventService {
     private final UserInfoRepo userInfoRepo;
     private final MyWebSocketHandler myWebSocketHandler;
     private final BrevoMailService brevoMailService;
+    private final NotificationService notificationService;
 
     @Value("${letschat.frontend.url:http://localhost:5173}")
     private String frontendUrl;
@@ -40,13 +42,15 @@ public class EventService {
         GroupInfoRepo groupInfoRepo,
         UserInfoRepo userInfoRepo,
         MyWebSocketHandler myWebSocketHandler,
-        BrevoMailService brevoMailService
+        BrevoMailService brevoMailService,
+        NotificationService notificationService
     ) {
         this.eventInfoRepo = eventInfoRepo;
         this.groupInfoRepo = groupInfoRepo;
         this.userInfoRepo = userInfoRepo;
         this.myWebSocketHandler = myWebSocketHandler;
         this.brevoMailService = brevoMailService;
+        this.notificationService = notificationService;
     }
 
     // Legacy support
@@ -261,6 +265,32 @@ public class EventService {
                 syncMsg.setLocation(dto.getLocation());
                 syncMsg.setUpdatedBy(userId);
 
+                // Send push notification to group members (offline recipients)
+                String summary = "Event updated";
+                if ("cancelled".equalsIgnoreCase(dto.getAction())) {
+                    summary = "Meeting cancelled";
+                } else if (start != null) {
+                    summary = "Rescheduled to " + start.toString();
+                } else if (dto.getLocation() != null && !dto.getLocation().isEmpty()) {
+                    summary = "Location updated: " + dto.getLocation();
+                }
+                final String finalSummary = summary;
+                final String startTimeStr = start != null ? start.toString() : "";
+
+                groupInfoRepo.getMembers(dto.getChatId())
+                    .map(m -> m.getUserId())
+                    .filter(mId -> !mId.equals(userId))
+                    .doOnNext(memberId -> {
+                        notificationService.sendEventChange(
+                            memberId,
+                            dto.getGroupEventId(),
+                            dto.getEventTitle(),
+                            finalSummary,
+                            startTimeStr
+                        );
+                    })
+                    .subscribe();
+
                 return myWebSocketHandler.broadcastEventSync(dto.getChatId(), userId, syncMsg)
                     .thenReturn("updated");
             }
@@ -400,6 +430,15 @@ public class EventService {
                                 alert.put("location", dto.getLocation());
 
                                 myWebSocketHandler.sendToUser(host.getUserId(), alert);
+
+                                // Send push notification to Host (in case offline)
+                                notificationService.sendEventChange(
+                                    host.getUserId(),
+                                    String.valueOf(saved.getEventId()),
+                                    dto.getAgenda() != null ? dto.getAgenda() : "New Meeting Request",
+                                    (dto.getBookerName() != null ? dto.getBookerName() : "A user") + " booked a meeting",
+                                    start.toString()
+                                );
 
                                 // If guest is also a LetsChat user: NO email, send WebSocket update
                                 if (dto.getGuestUserId() != null && !dto.getGuestUserId().isEmpty()) {
@@ -592,6 +631,18 @@ public class EventService {
                         // Send WebSocket to Host
                         myWebSocketHandler.sendToUser(saved.getUserId(), updateAlert);
 
+                        // Send push notification to the other party (offline recipient)
+                        String recipientUserId = isHost ? saved.getGuestUserId() : saved.getUserId();
+                        if (recipientUserId != null && !recipientUserId.isEmpty()) {
+                            notificationService.sendEventChange(
+                                recipientUserId,
+                                String.valueOf(saved.getEventId()),
+                                saved.getEventTitle() != null ? saved.getEventTitle() : "Meeting Booking",
+                                saved.getChangeMessage() != null ? saved.getChangeMessage() : "Meeting details changed to " + saved.getExternalStatus(),
+                                saved.getStartTime() != null ? saved.getStartTime().toString() : ""
+                            );
+                        }
+
                         // If guest is LetsChat user: send WebSocket to Guest, NO email!
                         if (saved.getGuestUserId() != null && !saved.getGuestUserId().isEmpty()) {
                             myWebSocketHandler.sendToUser(saved.getGuestUserId(), updateAlert);
@@ -706,7 +757,18 @@ public class EventService {
                     ev.setAction("cancelled");
                 }
 
-                return eventInfoRepo.save(ev).thenReturn(approve ? "approved" : "declined");
+                return eventInfoRepo.save(ev).map(saved -> {
+                    if (saved.getGuestUserId() != null && !saved.getGuestUserId().isEmpty()) {
+                        notificationService.sendEventChange(
+                            saved.getGuestUserId(),
+                            String.valueOf(saved.getEventId()),
+                            saved.getEventTitle() != null ? saved.getEventTitle() : "Meeting Booking",
+                            approve ? "Host approved the meeting request" : "Host declined the meeting request",
+                            saved.getStartTime() != null ? saved.getStartTime().toString() : ""
+                        );
+                    }
+                    return approve ? "approved" : "declined";
+                });
             });
     }
 

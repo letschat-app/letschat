@@ -99,14 +99,14 @@ public class ChatBoxReturnDTO {
     private String description;
 
     public String getMotto() {
-        return motto != null ? motto : (description != null ? description : Status);
+        return motto != null ? motto : description;
     }
     public void setMotto(String motto) {
         this.motto = motto;
     }
 
     public String getDescription() {
-        return description != null ? description : (motto != null ? motto : Status);
+        return description != null ? description : motto;
     }
     public void setDescription(String description) {
         this.description = description;
