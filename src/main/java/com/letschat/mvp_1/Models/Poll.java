@@ -2,6 +2,7 @@ package com.letschat.mvp_1.Models;
 
 import java.time.LocalDateTime;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Table;
 
 @Table("polls")
@@ -13,6 +14,8 @@ public class Poll {
     private Boolean allowMultiple;
     private Boolean allowUserOptions;
     private Boolean anonymous;
+    @Transient
+    private Boolean isHiddenVoting;
     private LocalDateTime expiresAt;
     private String createdBy;
     private LocalDateTime createdAt;
@@ -22,16 +25,30 @@ public class Poll {
 
     public Poll(Long id, String chatId, String question, Boolean allowMultiple, Boolean allowUserOptions,
                 Boolean anonymous, LocalDateTime expiresAt, String createdBy, LocalDateTime createdAt, String msgId) {
+        this(id, chatId, question, allowMultiple, allowUserOptions, anonymous, false, expiresAt, createdBy, createdAt, msgId);
+    }
+
+    public Poll(Long id, String chatId, String question, Boolean allowMultiple, Boolean allowUserOptions,
+                Boolean anonymous, Boolean isHiddenVoting, LocalDateTime expiresAt, String createdBy, LocalDateTime createdAt, String msgId) {
         this.id = id;
         this.chatId = chatId;
         this.question = question;
         this.allowMultiple = allowMultiple;
         this.allowUserOptions = allowUserOptions;
         this.anonymous = anonymous;
+        this.isHiddenVoting = isHiddenVoting;
         this.expiresAt = expiresAt;
         this.createdBy = createdBy;
         this.createdAt = createdAt;
         this.msgId = msgId;
+    }
+
+    public Boolean getIsHiddenVoting() {
+        return isHiddenVoting != null ? isHiddenVoting : false;
+    }
+
+    public void setIsHiddenVoting(Boolean isHiddenVoting) {
+        this.isHiddenVoting = isHiddenVoting;
     }
 
     public Long getId() {

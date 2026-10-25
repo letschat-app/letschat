@@ -15,6 +15,7 @@ public class PollUpdateDTO {
     private Boolean allow_multiple;
     private Boolean allow_user_options;
     private Boolean anonymous;
+    private Boolean is_hidden_voting;
     private Boolean is_expired;
 
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
@@ -89,6 +90,14 @@ public class PollUpdateDTO {
 
     public void setAnonymous(Boolean anonymous) {
         this.anonymous = anonymous;
+    }
+
+    public Boolean getIs_hidden_voting() {
+        return is_hidden_voting;
+    }
+
+    public void setIs_hidden_voting(Boolean is_hidden_voting) {
+        this.is_hidden_voting = is_hidden_voting;
     }
 
     public Boolean getIs_expired() {

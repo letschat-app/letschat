@@ -10,6 +10,7 @@ public class CreatePollRequestDTO {
     private Boolean allow_multiple;
     private Boolean allow_user_options;
     private Boolean anonymous;
+    private Boolean is_hidden_voting;
 
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
     private LocalDateTime expires_at;
@@ -56,6 +57,14 @@ public class CreatePollRequestDTO {
 
     public void setanonymous(Boolean anonymous) {
         this.anonymous = anonymous;
+    }
+
+    public Boolean getis_hidden_voting() {
+        return is_hidden_voting != null ? is_hidden_voting : false;
+    }
+
+    public void setis_hidden_voting(Boolean is_hidden_voting) {
+        this.is_hidden_voting = is_hidden_voting;
     }
 
     public LocalDateTime getexpires_at() {

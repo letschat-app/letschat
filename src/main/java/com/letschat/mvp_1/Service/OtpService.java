@@ -38,8 +38,10 @@ public class OtpService {
             return "";
         }
         return """
-            <div style="text-align: center; margin-bottom: 20px;">
-                <img src="%s" alt="LetsChat" width="64" height="64" style="width: 64px; height: 64px; border-radius: 14px; display: inline-block; object-fit: cover;" />
+            <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: inline-block; background-color: #0b0f19 !important; padding: 6px; border-radius: 18px; border: 1px solid #1e293b; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                    <img src="%s" alt="LetsChat" width="56" height="56" style="width: 56px; height: 56px; border-radius: 14px; display: block; object-fit: cover; filter: none !important; -webkit-filter: none !important;" />
+                </div>
             </div>
             """.formatted(appLogoUrl.trim());
     }
@@ -88,7 +90,18 @@ public class OtpService {
         String logoHtml = getLogoHtml();
         String subject = "LetsChat - Registration Verification Code";
         String html = """
+            <!DOCTYPE html>
             <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="color-scheme" content="light">
+                <meta name="supported-color-schemes" content="light">
+                <style>
+                    :root { color-scheme: light; supported-color-schemes: light; }
+                    img { filter: none !important; -webkit-filter: none !important; }
+                </style>
+            </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
                 <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                     %s
@@ -130,7 +143,18 @@ public class OtpService {
         String logoHtml = getLogoHtml();
         String subject = "LetsChat - Password Reset Code";
         String html = """
+            <!DOCTYPE html>
             <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="color-scheme" content="light">
+                <meta name="supported-color-schemes" content="light">
+                <style>
+                    :root { color-scheme: light; supported-color-schemes: light; }
+                    img { filter: none !important; -webkit-filter: none !important; }
+                </style>
+            </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
                 <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                     %s
@@ -196,7 +220,18 @@ public class OtpService {
         String logoHtml = getLogoHtml();
         String subject = "LetsChat - 2-Factor Authentication Code";
         String html = """
+            <!DOCTYPE html>
             <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="color-scheme" content="light">
+                <meta name="supported-color-schemes" content="light">
+                <style>
+                    :root { color-scheme: light; supported-color-schemes: light; }
+                    img { filter: none !important; -webkit-filter: none !important; }
+                </style>
+            </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
                 <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                     %s
@@ -228,66 +263,71 @@ public class OtpService {
     }
 
     public Mono<Boolean> sendWelcomeEmail(String email, String username, String userId) {
-        if (email == null || email.trim().isEmpty()) {
+        try {
+            if (email == null || email.trim().isEmpty()) {
+                return Mono.just(false);
+            }
+            String cleanEmail = email.trim().toLowerCase();
+            String safeUsername = (username != null && !username.trim().isEmpty()) ? username.trim() : "Friend";
+            String safeUserId = (userId != null && !userId.trim().isEmpty()) ? userId.trim() : "N/A";
+
+            String logoHtml = getLogoHtml();
+            String subject = "Welcome to LetsChat, " + safeUsername + "! 🎉 Your Account is Ready";
+            String html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; margin: 0; padding: 20px; background-color: #f8fafc;">
+                    <div style="max-width: 520px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 36px 28px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                        %s
+                        <h2 style="color: #0f172a; text-align: center; margin: 0 0 8px 0; font-size: 24px; font-weight: 700;">Welcome to LetsChat, %s! 🎉</h2>
+                        <p style="text-align: center; color: #64748b; font-size: 14px; margin: 0 0 24px 0;">Thank you for registering with LetsChat. Your account has been verified and is ready to use.</p>
+                        
+                        <!-- USER ID & CREDENTIAL CARD -->
+                        <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 20px; text-align: center; margin: 20px 0;">
+                            <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #2563eb; margin-bottom: 8px;">Your Unique User ID</div>
+                            <div style="font-size: 30px; font-weight: 800; letter-spacing: 4px; color: #1e3a8a; font-family: monospace; background-color: #ffffff; padding: 8px 20px; border-radius: 8px; border: 1px solid #dbeafe; display: inline-block;">
+                                %s
+                            </div>
+                            <div style="margin-top: 12px; font-size: 13px; color: #475569;">
+                                Username: <strong style="color: #0f172a;">@%s</strong>
+                            </div>
+                        </div>
+
+                        <!-- GUIDANCE SECTION (Table for 100%% email client compatibility) -->
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%%; margin: 24px 0 16px 0;">
+                            <tr>
+                                <td style="width: 36px; vertical-align: top; font-size: 22px; line-height: 1; padding-top: 2px;">🔑</td>
+                                <td style="vertical-align: top; font-size: 14px; color: #334155; line-height: 1.5; padding-bottom: 16px;">
+                                    <strong style="color: #0f172a;">Easy Login:</strong> You can use your <strong>User ID</strong> (<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #2563eb; font-weight: 600;">%s</code>) or your <strong>Username</strong> (<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #0f172a; font-weight: 600;">@%s</code>) along with your password to log in.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="width: 36px; vertical-align: top; font-size: 22px; line-height: 1; padding-top: 2px;">💬</td>
+                                <td style="vertical-align: top; font-size: 14px; color: #334155; line-height: 1.5;">
+                                    <strong style="color: #0f172a;">Share &amp; Connect:</strong> Share your <strong>User ID</strong> (<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #2563eb; font-weight: 600;">%s</code>) with friends, classmates, or colleagues so they can search for you and start chatting with you immediately on LetsChat!
+                                </td>
+                            </tr>
+                        </table>
+
+                        <!-- FOOTER -->
+                        <div style="text-align: center; margin-top: 28px; padding-top: 18px; border-top: 1px solid #f1f5f9;">
+                            <p style="font-size: 12px; color: #94a3b8; margin: 0 0 4px 0;">© 2026 LetsChat Inc. All rights reserved.</p>
+                            <p style="font-size: 11px; color: #cbd5e1; margin: 0;">Fast, secure real-time messaging.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """.formatted(logoHtml, safeUsername, safeUserId, safeUsername, safeUserId, safeUsername, safeUserId);
+
+            return sendMail(cleanEmail, subject, html);
+        } catch (Exception e) {
+            System.err.println("[OtpService] Failed to generate/send welcome email: " + e.getMessage());
             return Mono.just(false);
         }
-        String cleanEmail = email.trim().toLowerCase();
-        String safeUsername = (username != null && !username.trim().isEmpty()) ? username.trim() : "Friend";
-        String safeUserId = (userId != null && !userId.trim().isEmpty()) ? userId.trim() : "N/A";
-
-        String logoHtml = getLogoHtml();
-        String subject = "Welcome to LetsChat, " + safeUsername + "! 🎉 Your Account is Ready";
-        String html = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            </head>
-            <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; margin: 0; padding: 20px; background-color: #f8fafc;">
-                <div style="max-width: 520px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 36px 28px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                    %s
-                    <h2 style="color: #0f172a; text-align: center; margin: 0 0 8px 0; font-size: 24px; font-weight: 700;">Welcome to LetsChat, %s! 🎉</h2>
-                    <p style="text-align: center; color: #64748b; font-size: 14px; margin: 0 0 24px 0;">Thank you for registering with LetsChat. Your account has been verified and is ready to use.</p>
-                    
-                    <!-- USER ID & CREDENTIAL CARD -->
-                    <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 20px; text-align: center; margin: 20px 0;">
-                        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #2563eb; margin-bottom: 8px;">Your Unique User ID</div>
-                        <div style="font-size: 30px; font-weight: 800; letter-spacing: 4px; color: #1e3a8a; font-family: monospace; background-color: #ffffff; padding: 8px 20px; border-radius: 8px; border: 1px solid #dbeafe; display: inline-block;">
-                            %s
-                        </div>
-                        <div style="margin-top: 12px; font-size: 13px; color: #475569;">
-                            Username: <strong style="color: #0f172a;">@%s</strong>
-                        </div>
-                    </div>
-
-                    <!-- GUIDANCE SECTION (Table for 100% email client compatibility) -->
-                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width: 100%; margin: 24px 0 16px 0;">
-                        <tr>
-                            <td style="width: 36px; vertical-align: top; font-size: 22px; line-height: 1; padding-top: 2px;">🔑</td>
-                            <td style="vertical-align: top; font-size: 14px; color: #334155; line-height: 1.5; padding-bottom: 16px;">
-                                <strong style="color: #0f172a;">Easy Login:</strong> You can use your <strong>User ID</strong> (<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #2563eb; font-weight: 600;">%s</code>) or your <strong>Username</strong> (<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #0f172a; font-weight: 600;">@%s</code>) along with your password to log in.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="width: 36px; vertical-align: top; font-size: 22px; line-height: 1; padding-top: 2px;">💬</td>
-                            <td style="vertical-align: top; font-size: 14px; color: #334155; line-height: 1.5;">
-                                <strong style="color: #0f172a;">Share &amp; Connect:</strong> Share your <strong>User ID</strong> (<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #2563eb; font-weight: 600;">%s</code>) with friends, classmates, or colleagues so they can search for you and start chatting with you immediately on LetsChat!
-                            </td>
-                        </tr>
-                    </table>
-
-                    <!-- FOOTER -->
-                    <div style="text-align: center; margin-top: 28px; padding-top: 18px; border-top: 1px solid #f1f5f9;">
-                        <p style="font-size: 12px; color: #94a3b8; margin: 0 0 4px 0;">© 2026 LetsChat Inc. All rights reserved.</p>
-                        <p style="font-size: 11px; color: #cbd5e1; margin: 0;">Fast, secure real-time messaging.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """.formatted(logoHtml, safeUsername, safeUserId, safeUsername, safeUserId, safeUsername, safeUserId);
-
-        return sendMail(cleanEmail, subject, html);
     }
 
     public Mono<Boolean> sendPasswordChangeOtp(String userId, String targetEmail) {
@@ -301,7 +341,18 @@ public class OtpService {
         String logoHtml = getLogoHtml();
         String subject = "LetsChat - Password Change Verification Code";
         String html = """
+            <!DOCTYPE html>
             <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="color-scheme" content="light">
+                <meta name="supported-color-schemes" content="light">
+                <style>
+                    :root { color-scheme: light; supported-color-schemes: light; }
+                    img { filter: none !important; -webkit-filter: none !important; }
+                </style>
+            </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
                 <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                     %s
@@ -348,7 +399,18 @@ public class OtpService {
         String logoHtml = getLogoHtml();
         String subject = "LetsChat - 2FA Security Verification Code";
         String html = """
+            <!DOCTYPE html>
             <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="color-scheme" content="light">
+                <meta name="supported-color-schemes" content="light">
+                <style>
+                    :root { color-scheme: light; supported-color-schemes: light; }
+                    img { filter: none !important; -webkit-filter: none !important; }
+                </style>
+            </head>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f8fafc;">
                 <div style="max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 32px 24px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                     %s

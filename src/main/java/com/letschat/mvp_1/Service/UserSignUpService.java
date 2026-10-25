@@ -36,22 +36,36 @@ public class UserSignUpService {
     }   
 
     public Mono<Boolean> initSignup(UserSignUpDTO request) {
-        if (request.getEmail() == null || request.getEmail().trim().isEmpty() || request.getPublicName() == null) {
-            return Mono.just(false);
-        }
-        String cleanEmail = request.getEmail().trim().toLowerCase();
-        String cleanUsername = request.getPublicName().trim().toLowerCase();
-        request.setPublicName(cleanUsername);
+        String rawEmail = request.getEmail();
+        String rawUsername = (request.getPublicName() != null && !request.getPublicName().trim().isEmpty())
+            ? request.getPublicName()
+            : request.getUsername();
 
-        return usernameValidationService.checkUsername(cleanUsername, null)
-            .flatMap(checkResult -> {
-                if ("BLOCK".equals(checkResult.getDecision())) {
-                    System.out.println("[SignUp] Rejected duplicate/similar username: " + cleanUsername);
-                    return Mono.just(false);
-                }
-                pendingSignupMap.put(cleanEmail, new PendingSignupEntry(request, Instant.now().plusSeconds(PENDING_SIGNUP_TTL_SECONDS)));
-                return otpService.sendRegistrationOtp(cleanEmail);
-            });
+        if (rawEmail == null || rawEmail.trim().isEmpty() || rawUsername == null || rawUsername.trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Email and username are required"));
+        }
+        String cleanEmail = rawEmail.trim().toLowerCase();
+        String cleanUsername = rawUsername.trim().toLowerCase();
+        request.setEmail(cleanEmail);
+        request.setPublicName(cleanUsername);
+        request.setUsername(cleanUsername);
+
+        return userInfoRepo.findByEmail(cleanEmail)
+            .flatMap(existingUser -> {
+                System.out.println("[SignUp] Attempt to register existing email: " + cleanEmail);
+                return Mono.<Boolean>error(new IllegalArgumentException("Email already exists"));
+            })
+            .switchIfEmpty(Mono.defer(() ->
+                usernameValidationService.checkUsername(cleanUsername, null)
+                    .flatMap(checkResult -> {
+                        if ("BLOCK".equals(checkResult.getDecision())) {
+                            System.out.println("[SignUp] Rejected duplicate/similar username: " + cleanUsername);
+                            return Mono.error(new IllegalArgumentException(checkResult.getMessage() != null ? checkResult.getMessage() : "Username is already taken or too similar"));
+                        }
+                        pendingSignupMap.put(cleanEmail, new PendingSignupEntry(request, Instant.now().plusSeconds(PENDING_SIGNUP_TTL_SECONDS)));
+                        return otpService.sendRegistrationOtp(cleanEmail);
+                    })
+            ));
     }
 
     public Mono<UserSearchResult> verifyAndCreateUser(String email, String otp) {
@@ -86,24 +100,28 @@ public class UserSignUpService {
 
         return userInfoRepo.insertWithEmail(id, displayName, cleanUsername, request.getPassword(), request.getEmail())
             .doOnSuccess(user -> {
-                adminService.onUserRegistered(id);
-                String targetEmail = (user != null && user.getEmail() != null) ? user.getEmail() : request.getEmail();
-                String username = (user != null && user.getPublicName() != null) ? user.getPublicName() : cleanUsername;
-                if (targetEmail != null && !targetEmail.trim().isEmpty()) {
-                    otpService.sendWelcomeEmail(targetEmail, username, id)
-                        .subscribe(
-                            sent -> System.out.println("[SignUp] Welcome email dispatched to " + targetEmail + ": " + sent),
-                            err -> System.err.println("[SignUp] Failed to dispatch welcome email: " + err.getMessage())
-                        );
+                try {
+                    adminService.onUserRegistered(id);
+                    String targetEmail = (user != null && user.getEmail() != null) ? user.getEmail() : request.getEmail();
+                    String username = (user != null && user.getPublicName() != null) ? user.getPublicName() : cleanUsername;
+                    if (targetEmail != null && !targetEmail.trim().isEmpty()) {
+                        otpService.sendWelcomeEmail(targetEmail, username, id)
+                            .subscribe(
+                                sent -> System.out.println("[SignUp] Welcome email dispatched to " + targetEmail + ": " + sent),
+                                err -> System.err.println("[SignUp] Failed to dispatch welcome email: " + err.getMessage())
+                            );
+                    }
+                } catch (Exception e) {
+                    System.err.println("[SignUp] Non-fatal post-registration error: " + e.getMessage());
                 }
             })
             .map(user -> {
                 UserSearchResult result = new UserSearchResult();
                 result.setUserId(id);
-                result.setUserName(user.getPublicName());
-                result.setUsername(user.getPublicName());
-                result.setDisplayName(user.getPrivateName());
-                result.setProfile(user.getUserProfilePath());
+                result.setUserName(user != null && user.getPublicName() != null ? user.getPublicName() : cleanUsername);
+                result.setUsername(user != null && user.getPublicName() != null ? user.getPublicName() : cleanUsername);
+                result.setDisplayName(user != null && user.getPrivateName() != null ? user.getPrivateName() : displayName);
+                result.setProfile(user != null ? user.getUserProfilePath() : null);
                 return result;
             });
     }

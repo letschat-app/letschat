@@ -566,7 +566,11 @@ public class UserController {
         return userSignUpService.initSignup(request)
                 .map(sent -> sent
                     ? ResponseEntity.ok(Map.of("status", "success", "message", "OTP sent to " + request.getEmail()))
-                    : ResponseEntity.status(400).body(Map.of("status", "error", "message", "Failed to send OTP or invalid email")));
+                    : ResponseEntity.status(400).body(Map.of("status", "error", "message", "Failed to send OTP or invalid email")))
+                .onErrorResume(IllegalArgumentException.class, ex ->
+                    Mono.just(ResponseEntity.status(400).body(Map.of("status", "error", "message", ex.getMessage()))))
+                .onErrorResume(ex ->
+                    Mono.just(ResponseEntity.status(500).body(Map.of("status", "error", "message", "An unexpected error occurred during signup"))));
     }
 
     @PostMapping("/signup/verify")
