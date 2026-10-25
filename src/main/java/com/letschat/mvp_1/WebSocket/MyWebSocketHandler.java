@@ -930,6 +930,7 @@ private void fireNotification(String receiverId, String chatId,
                                         publicDTO.setAllow_multiple(pollDTO.getAllow_multiple());
                                         publicDTO.setAllow_user_options(pollDTO.getAllow_user_options());
                                         publicDTO.setAnonymous(pollDTO.getAnonymous());
+                                        publicDTO.setIs_hidden_voting(pollDTO.getIs_hidden_voting());
                                         publicDTO.setIs_expired(pollDTO.getIs_expired());
                                         publicDTO.setExpires_at(pollDTO.getExpires_at());
                                         publicDTO.setTotal_voters(pollDTO.getTotal_voters());
@@ -977,6 +978,7 @@ private void fireNotification(String receiverId, String chatId,
                                         publicDTO.setAllow_multiple(pollDTO.getAllow_multiple());
                                         publicDTO.setAllow_user_options(pollDTO.getAllow_user_options());
                                         publicDTO.setAnonymous(pollDTO.getAnonymous());
+                                        publicDTO.setIs_hidden_voting(pollDTO.getIs_hidden_voting());
                                         publicDTO.setIs_expired(pollDTO.getIs_expired());
                                         publicDTO.setExpires_at(pollDTO.getExpires_at());
                                         publicDTO.setTotal_voters(pollDTO.getTotal_voters());
@@ -1212,7 +1214,7 @@ private void fireNotification(String receiverId, String chatId,
 
     public Mono<Void> announce(String Chatid, String purpose, String username, String admin, String adminid, Integer spaceId) {
         String msgId = "Msg-" + UUID.randomUUID().toString();
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
         System.out.println(adminid);
         String sender = "server";
         String contents;

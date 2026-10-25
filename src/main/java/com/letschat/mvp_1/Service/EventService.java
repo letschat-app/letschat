@@ -106,8 +106,8 @@ public class EventService {
                         ev.setChatId(dto.getChatId());
                         ev.setAction(dto.getAction() != null ? dto.getAction() : "scheduled");
                         ev.setScope("ALL");
-                        ev.setIsAdded(true);
-                        ev.setIsSync(true);
+                        ev.setIsAdded(memberId.equals(userId));
+                        ev.setIsSync(memberId.equals(userId));
                         ev.setIsGroupVisible(dto.getIsGroupVisible());
                         ev.setMeetingType(dto.getMeetingType());
                         ev.setMeetingLink(dto.getMeetingLink());
@@ -204,11 +204,22 @@ public class EventService {
         return eventInfoRepo.findGroupEvents(chatId)
             .flatMap(groupEvent -> {
                 String gid = groupEvent.getGroupEventId();
-                if (gid != null && !gid.isEmpty()) {
-                    return eventInfoRepo.findByGroupEventIdAndUserId(gid, userId)
-                        .defaultIfEmpty(groupEvent);
-                }
-                return Mono.just(groupEvent);
+                Mono<EventInfo> eventMono = (gid != null && !gid.isEmpty())
+                    ? eventInfoRepo.findByGroupEventIdAndUserId(gid, userId).defaultIfEmpty(groupEvent)
+                    : Mono.just(groupEvent);
+
+                return eventMono.flatMap(ev -> {
+                    String effectiveCreatorId = ev.getCreatorId() != null ? ev.getCreatorId() : groupEvent.getCreatorId();
+                    if (effectiveCreatorId != null && !effectiveCreatorId.isEmpty()) {
+                        return userInfoRepo.findById(effectiveCreatorId)
+                            .map(u -> {
+                                ev.setCreatorName(u.getUserName());
+                                return ev;
+                            })
+                            .defaultIfEmpty(ev);
+                    }
+                    return Mono.just(ev);
+                });
             });
     }
 

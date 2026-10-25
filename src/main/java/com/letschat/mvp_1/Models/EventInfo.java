@@ -3,6 +3,7 @@ package com.letschat.mvp_1.Models;
 import java.time.Instant;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Table;
 
 @Table("\"EventInfo\"")
@@ -40,6 +41,8 @@ public class EventInfo {
     private String guestUserId;
     private String lastModifiedBy; // "HOST" or "GUEST"
     private String changeMessage;
+    @Transient
+    private String creatorName;
 
     public EventInfo(){}
 
@@ -268,5 +271,12 @@ public class EventInfo {
     }
     public void setChangeMessage(String changeMessage) {
         this.changeMessage = changeMessage;
+    }
+
+    public String getCreatorName() {
+        return creatorName;
+    }
+    public void setCreatorName(String creatorName) {
+        this.creatorName = creatorName;
     }
 }

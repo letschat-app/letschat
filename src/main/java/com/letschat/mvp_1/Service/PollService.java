@@ -84,6 +84,7 @@ public class PollService {
             .flatMap(cId -> {
                 Poll poll = new Poll(null, dto.getchatid(), dto.getquestion().trim(),
                     dto.getallow_multiple(), dto.getallow_user_options(), dto.getanonymous(),
+                    Boolean.TRUE.equals(dto.getis_hidden_voting()),
                     dto.getexpires_at(), userId, now, null);
 
                 return pollRepo.save(poll)
@@ -161,10 +162,11 @@ public class PollService {
                         dto.setAllow_multiple(poll.getAllowMultiple());
                         dto.setAllow_user_options(poll.getAllowUserOptions());
                         dto.setAnonymous(poll.getAnonymous());
+                        dto.setIs_hidden_voting(poll.getIsHiddenVoting());
                         dto.setIs_expired(isExpired);
                         dto.setExpires_at(poll.getExpiresAt());
                         dto.setTotal_voters(uniqueVoters.size());
-                        dto.setTotal_members((int) totalMembers);
+                        dto.setTotal_members((int) Math.max(2, totalMembers));
                         dto.setOptions(optionDTOs);
                         if (!userVotes.isEmpty()) {
                             dto.setUser_votes(userVotes);
@@ -334,10 +336,11 @@ public class PollService {
                                     pollDTO.setAllow_multiple(poll.getAllowMultiple());
                                     pollDTO.setAllow_user_options(poll.getAllowUserOptions());
                                     pollDTO.setAnonymous(poll.getAnonymous());
+                                    pollDTO.setIs_hidden_voting(poll.getIsHiddenVoting());
                                     pollDTO.setIs_expired(isExpired);
                                     pollDTO.setExpires_at(poll.getExpiresAt());
                                     pollDTO.setTotal_voters(uniqueVoters.size());
-                                    pollDTO.setTotal_members((int) totalMembers);
+                                    pollDTO.setTotal_members((int) Math.max(2, totalMembers));
                                     pollDTO.setOptions(optionDTOs);
                                     if (!uVotes.isEmpty()) {
                                         pollDTO.setUser_votes(uVotes);

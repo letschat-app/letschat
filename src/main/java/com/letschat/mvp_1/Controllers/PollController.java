@@ -29,10 +29,12 @@ public class PollController {
             @RequestBody CreatePollRequestDTO dto,
             @RequestHeader(value = "User-Id", required = false) String headerUserId,
             @RequestHeader(value = "user-id", required = false) String lowerHeaderUserId,
-            Principal principal) {
-        String userId = (principal != null && principal.getName() != null) 
-                ? principal.getName() 
-                : (headerUserId != null && !headerUserId.isBlank() ? headerUserId : lowerHeaderUserId);
+        String effectiveHeader = (headerUserId != null && !headerUserId.isBlank()) 
+                ? headerUserId 
+                : (lowerHeaderUserId != null && !lowerHeaderUserId.isBlank() ? lowerHeaderUserId : null);
+        String userId = (effectiveHeader != null) 
+                ? effectiveHeader 
+                : ((principal != null && principal.getName() != null && !"anonymousUser".equals(principal.getName())) ? principal.getName() : null);
 
         if (userId == null || userId.isBlank()) {
             return Mono.just(ResponseEntity.status(401).body((Object) "Unauthorized: Missing User-Id header"));
