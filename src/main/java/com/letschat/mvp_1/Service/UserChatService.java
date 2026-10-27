@@ -245,6 +245,13 @@ public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
                     ? space.getSpaceName().trim()
                     : "Space " + spaceId;
 
+                Mono<String> resolveUserId;
+                if (userId != null && !userId.trim().isEmpty() && !"server".equals(userId)) {
+                    resolveUserId = Mono.just(userId.trim());
+                } else {
+                    resolveUserId = userChatInfoRepo.findUserIds(safeChatId).next().defaultIfEmpty("admin");
+                }
+
                 Mono<String> resolveUserName = (userName != null && !userName.trim().isEmpty())
                     ? Mono.just(userName.trim())
                     : (userId != null
@@ -253,11 +260,18 @@ public Mono<String> updateInfo(UserSearchResult info, String Chatid) {
                             .defaultIfEmpty("Admin")
                         : Mono.just("Admin"));
 
-                String safeUserId = (userId != null) ? userId : "server";
-
-                return resolveUserName.flatMap(creatorName ->
-                    myWebSocketHandler.announce(safeChatId, "space_created", spaceName, creatorName, safeUserId, spaceId)
-                ).thenReturn("success");
+                return Mono.zip(resolveUserId, resolveUserName)
+                    .flatMap(tuple -> myWebSocketHandler.announce(safeChatId, "space_created", spaceName, tuple.getT2(), tuple.getT1(), spaceId))
+                    .onErrorResume(err -> {
+                        System.err.println("Failed to announce space creation: " + err.getMessage());
+                        return Mono.empty();
+                    })
+                    .thenReturn("success");
+            })
+            .defaultIfEmpty("success")
+            .onErrorResume(err -> {
+                System.err.println("Failed in addspace: " + err.getMessage());
+                return Mono.just("success");
             });
     }
 

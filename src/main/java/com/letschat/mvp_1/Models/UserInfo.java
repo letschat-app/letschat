@@ -159,4 +159,10 @@ public class UserInfo {
     public void setLastDisplayNameChangeAt(LocalDateTime lastDisplayNameChangeAt) {
         this.lastDisplayNameChangeAt = lastDisplayNameChangeAt;
     }
+
+
+    public String getUserName() { return getUsername(); }
+    public String getName() { return getDisplayName(); }
+    public String getProfile() { return getUserProfilePath(); }
+
 }

@@ -547,4 +547,32 @@ public class NotificationService {
                 )
                 .subscribe(null, e -> System.out.println("[EVENT_CHANGED] subscription error: " + e));
     }
+
+    public void sendGroupEventNotification(String userId, String chatId, String groupName, String eventId, String title, String summary, String startTime) {
+        if (userId == null || userId.isEmpty()) return;
+        getTokens(userId)
+                .flatMap(token ->
+                        Mono.fromRunnable(() -> {
+                            try {
+                                Map<String, String> data = new HashMap<>();
+                                data.put("type", "EVENT_CHANGED");
+                                data.put("eventId", eventId != null ? eventId : "");
+                                data.put("chatId", chatId != null ? chatId : "");
+                                data.put("chatName", groupName != null ? groupName : "Group Event");
+                                data.put("title", groupName != null ? groupName : "Event Update");
+                                data.put("changeSummary", summary != null ? summary : ("Event: " + title));
+                                data.put("startTime", startTime != null ? startTime : "");
+
+                                com.google.firebase.messaging.FirebaseMessaging.getInstance()
+                                        .send(com.google.firebase.messaging.Message.builder().putAllData(data).setToken(token).build());
+
+                                System.out.println("[EVENT_NOTIF] sent to " + userId + " for " + title + " in " + groupName);
+                            } catch (Exception e) {
+                                System.out.println("[EVENT_NOTIF] error: " + e);
+                            }
+                        }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                )
+                .subscribe(null, e -> System.out.println("[EVENT_NOTIF] subscription error: " + e));
+    }
+
 }

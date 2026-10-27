@@ -40,12 +40,9 @@ public class RoomService {
         .flatMap(user->generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            String defaultName = user.getPublicName();
-            if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
-                if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
-                    defaultName = user.getPrivateName().trim();
-                }
-            }
+            String defaultName = (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty())
+                    ? user.getPrivateName().trim()
+                    : user.getPublicName();
             return userChatInfoRepo.insert(chatid, user.getUserId(), Roomname, defaultName, now, now,"room","admin",null,user.getUserProfilePath())
             .flatMap(chat->{
                 return generateGroupId()
@@ -130,11 +127,15 @@ public class RoomService {
                         .flatMap(chatId -> {
                             LocalDateTime now = LocalDateTime.now();
 
+                            String effectiveRoomNick = (user.getRoomNickname() != null && !user.getRoomNickname().trim().isEmpty())
+                                    ? user.getRoomNickname().trim()
+                                    : ((user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) ? user.getPrivateName().trim() : user.getPublicName());
+
                             return userChatInfoRepo.insert(
                                     chatId,
                                     user.getUserId(),
                                     cleanRoomName,
-                                    user.getRoomNickname(),
+                                    effectiveRoomNick,
                                     now,
                                     now,
                                     "room",
@@ -171,33 +172,37 @@ public class RoomService {
             return userInfoRepo.findByUserId(UserId)
             .flatMap(user->{
                 return userChatInfoRepo.findByChatId(room.getChatId())
-
                 .flatMap(chat->{
                     return userChatInfoRepo.joinedOrNot(chat.getChatId(), UserId)
                     .flatMap(chatid->Mono.just(chatid))
-                    .switchIfEmpty(
-                     userChatInfoRepo.insertWithMute(
-                        chat.getChatId(),
-                        user.getUserId(),
-                        room.getRoomName(),
-                        user.getRoomNickname(),
-                        now,
-                        now,
-                        "room",
-                        "viewer",
-                        null,
-                        user.getUserProfilePath(),
-                        true
-                    )
-                .then(Mono.fromRunnable(() ->
-                    myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
-                ))
-                .then(roomInfoRepo.increaseMembers(RoomId).then())
-                .thenReturn(chat.getChatId()));
+                    .switchIfEmpty(Mono.defer(() -> {
+                        String effectiveRoomNick = (user.getRoomNickname() != null && !user.getRoomNickname().trim().isEmpty())
+                                ? user.getRoomNickname().trim()
+                                : ((user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) ? user.getPrivateName().trim() : user.getPublicName());
+
+                        return userChatInfoRepo.insertWithMute(
+                            chat.getChatId(),
+                            user.getUserId(),
+                            room.getRoomName(),
+                            effectiveRoomNick,
+                            now,
+                            now,
+                            "room",
+                            "viewer",
+                            null,
+                            user.getUserProfilePath(),
+                            true
+                        )
+                        .then(Mono.fromRunnable(() ->
+                            myWebSocketHandler.addUserToChatCache(chat.getChatId(), UserId)
+                        ))
+                        .then(roomInfoRepo.increaseMembers(RoomId).then())
+                        .thenReturn(chat.getChatId());
+                    }));
                 });
             });
         })
-        .switchIfEmpty(Mono.just("classroom not exist"));
+        .switchIfEmpty(Mono.just("room not exist"));
     }
 
     public Mono<RoomInfo> view(String roomid){

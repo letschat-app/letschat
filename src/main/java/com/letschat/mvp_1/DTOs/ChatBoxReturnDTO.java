@@ -19,6 +19,14 @@ public class ChatBoxReturnDTO {
     private String username;
     private String displayName;
 
+    private String lastMessage;
+    private String lastMessageType;
+    private String lastMessageSender;
+    private String lastMessageSenderId;
+    private String lastMessageId;
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime lastMessageTimestamp;
+
     public ChatBoxReturnDTO(){}
     public ChatBoxReturnDTO(String ChatId,String Id,String ChatName,String Type,String Status,LocalDateTime timestamp,String Role,String Profile,Long noOfMembers){
         this.ChatId=ChatId;
@@ -131,5 +139,47 @@ public class ChatBoxReturnDTO {
     }
     public void setDisplayName(String displayName) {
         this.displayName = displayName;
+    }
+
+    public String getLastMessage() {
+        return lastMessage;
+    }
+    public void setLastMessage(String lastMessage) {
+        this.lastMessage = lastMessage;
+    }
+
+    public String getLastMessageType() {
+        return lastMessageType;
+    }
+    public void setLastMessageType(String lastMessageType) {
+        this.lastMessageType = lastMessageType;
+    }
+
+    public String getLastMessageSender() {
+        return lastMessageSender;
+    }
+    public void setLastMessageSender(String lastMessageSender) {
+        this.lastMessageSender = lastMessageSender;
+    }
+
+    public String getLastMessageSenderId() {
+        return lastMessageSenderId;
+    }
+    public void setLastMessageSenderId(String lastMessageSenderId) {
+        this.lastMessageSenderId = lastMessageSenderId;
+    }
+
+    public String getLastMessageId() {
+        return lastMessageId;
+    }
+    public void setLastMessageId(String lastMessageId) {
+        this.lastMessageId = lastMessageId;
+    }
+
+    public LocalDateTime getLastMessageTimestamp() {
+        return lastMessageTimestamp;
+    }
+    public void setLastMessageTimestamp(LocalDateTime lastMessageTimestamp) {
+        this.lastMessageTimestamp = lastMessageTimestamp;
     }
 }

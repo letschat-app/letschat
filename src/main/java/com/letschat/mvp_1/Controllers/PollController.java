@@ -29,6 +29,7 @@ public class PollController {
             @RequestBody CreatePollRequestDTO dto,
             @RequestHeader(value = "User-Id", required = false) String headerUserId,
             @RequestHeader(value = "user-id", required = false) String lowerHeaderUserId,
+            Principal principal) {
         String effectiveHeader = (headerUserId != null && !headerUserId.isBlank()) 
                 ? headerUserId 
                 : (lowerHeaderUserId != null && !lowerHeaderUserId.isBlank() ? lowerHeaderUserId : null);

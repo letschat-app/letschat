@@ -42,12 +42,9 @@ public class GroupAddService {
         .flatMap(user -> {
             return userChatInfoRepo.findByChatId(group.getChatId())
             .flatMap(chat -> {
-                String defaultName = user.getPublicName();
-                if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
-                    if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
-                        defaultName = user.getPrivateName().trim();
-                    }
-                }
+                String defaultName = (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty())
+                        ? user.getPrivateName().trim()
+                        : user.getPublicName();
                 final String initialName = defaultName;
 
                 return userChatInfoRepo.insert(
@@ -89,12 +86,9 @@ public class GroupAddService {
                     return userChatInfoRepo.joinedOrNot(chat.getChatId(), UserId)
                     .flatMap(chatid->Mono.just(chatid))
                     .switchIfEmpty(Mono.defer(() -> {
-                        String defaultName = user.getPublicName();
-                        if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
-                            if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
-                                defaultName = user.getPrivateName().trim();
-                            }
-                        }
+                        String defaultName = (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty())
+                                ? user.getPrivateName().trim()
+                                : user.getPublicName();
                         return userChatInfoRepo.insert(
                             chat.getChatId(),
                             user.getUserId(),

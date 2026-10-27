@@ -17,6 +17,8 @@ import com.letschat.mvp_1.Models.UserInfo;
 import com.letschat.mvp_1.Repositories.EventInfoRepo;
 import com.letschat.mvp_1.Repositories.GroupInfoRepo;
 import com.letschat.mvp_1.Repositories.UserInfoRepo;
+import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
+import com.letschat.mvp_1.Repositories.MessageInfoRepo;
 import com.letschat.mvp_1.WebSocket.MyWebSocketHandler;
 
 import reactor.core.publisher.Flux;
@@ -30,6 +32,8 @@ public class EventService {
     private final MyWebSocketHandler myWebSocketHandler;
     private final BrevoMailService brevoMailService;
     private final NotificationService notificationService;
+    private final UserChatInfoRepo userChatInfoRepo;
+    private final MessageInfoRepo messageInfoRepo;
 
     @Value("${letschat.frontend.url:http://localhost:5173}")
     private String frontendUrl;
@@ -43,7 +47,9 @@ public class EventService {
         UserInfoRepo userInfoRepo,
         MyWebSocketHandler myWebSocketHandler,
         BrevoMailService brevoMailService,
-        NotificationService notificationService
+        NotificationService notificationService,
+        UserChatInfoRepo userChatInfoRepo,
+        MessageInfoRepo messageInfoRepo
     ) {
         this.eventInfoRepo = eventInfoRepo;
         this.groupInfoRepo = groupInfoRepo;
@@ -51,6 +57,8 @@ public class EventService {
         this.myWebSocketHandler = myWebSocketHandler;
         this.brevoMailService = brevoMailService;
         this.notificationService = notificationService;
+        this.userChatInfoRepo = userChatInfoRepo;
+        this.messageInfoRepo = messageInfoRepo;
     }
 
     // Legacy support
@@ -67,7 +75,106 @@ public class EventService {
     }
 
     public Mono<String> action(EventInfo event) {
+        if (event.getEventId() != null) {
+            return eventInfoRepo.findById(event.getEventId())
+                .flatMap(existing -> {
+                    String creatorId = existing.getCreatorId();
+                    if (creatorId != null && !creatorId.trim().isEmpty() && !creatorId.equals(event.getUserId())) {
+                        // Receiving attendee: only allow updating personal flags, keep creator's event details intact
+                        if (event.getIsAdded() != null) existing.setIsAdded(event.getIsAdded());
+                        if (event.getIsSync() != null) existing.setIsSync(event.getIsSync());
+                        if (event.getReminderEnabled() != null) existing.setReminderEnabled(event.getReminderEnabled());
+                        if (event.getReminderOffset() != null) existing.setReminderOffset(event.getReminderOffset());
+                        return eventInfoRepo.save(existing).thenReturn("ok");
+                    }
+                    return eventInfoRepo.save(event).thenReturn("ok");
+                })
+                .switchIfEmpty(Mono.defer(() -> eventInfoRepo.save(event).thenReturn("ok")));
+        }
         return eventInfoRepo.save(event).thenReturn("ok");
+    }
+
+    private void triggerEventBannerAndNotification(String chatId, String userId, String groupEventId, String eventTitle, String action, Instant start) {
+        if (chatId == null || chatId.isEmpty() || userId == null || userId.isEmpty()) return;
+
+        userInfoRepo.findById(userId)
+            .flatMap(user -> {
+                String rawUserName = user.getUsername() != null ? user.getUsername() : user.getPublicName();
+                final String userName = (rawUserName != null && !rawUserName.trim().isEmpty()) ? rawUserName.trim() : "User";
+                final String safeTitle = (eventTitle != null && !eventTitle.trim().isEmpty()) ? eventTitle.trim() : "Event";
+                final String actionLower = (action != null) ? action.trim().toLowerCase() : "scheduled";
+
+                String othersText;
+                String youText;
+
+                if ("cancelled".equals(actionLower)) {
+                    othersText = userName + " cancelled " + safeTitle;
+                    youText = "You cancelled " + safeTitle;
+                } else if ("postponed".equals(actionLower) || "rescheduled".equals(actionLower)) {
+                    othersText = userName + " postponed " + safeTitle;
+                    youText = "You postponed " + safeTitle;
+                } else {
+                    String firstChar = safeTitle.isEmpty() ? "" : safeTitle.substring(0, 1).toLowerCase();
+                    String article = "aeiou".indexOf(firstChar) >= 0 ? "an" : "a";
+                    othersText = userName + " scheduled " + article + " " + safeTitle;
+                    youText = "You scheduled " + article + " " + safeTitle;
+                }
+
+                String fullContent = othersText + "/" + youText;
+                String bannerMsgId = "Msg-" + UUID.randomUUID().toString();
+                java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+
+                return messageInfoRepo.insert(
+                    bannerMsgId,
+                    chatId,
+                    userId,
+                    "event-banner-pin",
+                    fullContent,
+                    groupEventId,
+                    null,
+                    now,
+                    0
+                ).flatMap(savedMsg -> {
+                    return myWebSocketHandler.broadcastBannerPin(
+                        chatId,
+                        bannerMsgId,
+                        userId,
+                        othersText,
+                        youText,
+                        "event-banner-pin",
+                        groupEventId,
+                        now
+                    );
+                }).then(
+                    userChatInfoRepo.findChatNameByChatId(chatId)
+                        .defaultIfEmpty("Group")
+                        .flatMap(groupName -> {
+                            String notifSummary = "cancelled".equals(actionLower)
+                                ? (userName + " cancelled \"" + safeTitle + "\" in " + groupName)
+                                : ("postponed".equals(actionLower) || "rescheduled".equals(actionLower))
+                                    ? (userName + " postponed \"" + safeTitle + "\" in " + groupName)
+                                    : (userName + " scheduled \"" + safeTitle + "\" in " + groupName);
+
+                            String startStr = (start != null) ? start.toString() : "";
+
+                            return userChatInfoRepo.findUserIds(chatId)
+                                .filter(mId -> !mId.equals(userId))
+                                .doOnNext(memberId -> {
+                                    notificationService.sendGroupEventNotification(
+                                        memberId,
+                                        chatId,
+                                        groupName,
+                                        groupEventId,
+                                        safeTitle,
+                                        notifSummary,
+                                        startStr
+                                    );
+                                })
+                                .then();
+                        })
+                );
+            })
+            .subscribe(null, err -> System.err.println("[EventService] Error triggering banner/notif: " + err.getMessage()));
     }
 
     // ================= GROUP EVENT CREATION & BATCH SYNC =================
@@ -147,11 +254,93 @@ public class EventService {
                             syncMsg.setUpdatedBy(userId);
 
                             myWebSocketHandler.broadcastEventSync(dto.getChatId(), userId, syncMsg).subscribe();
+                            triggerEventBannerAndNotification(dto.getChatId(), userId, groupEventId, dto.getEventTitle(), "scheduled", start);
                         });
                 });
         }
 
-        // Scope "PERSONAL" or private calendar event
+        // If an existing group event was created by another user, receiving persons can only add it (preserving creator's details)
+        if (dto.getGroupEventId() != null && !dto.getGroupEventId().isEmpty()) {
+            return eventInfoRepo.findByGroupEventId(dto.getGroupEventId())
+                .next()
+                .flatMap(existingEvent -> {
+                    String creatorId = existingEvent.getCreatorId();
+                    boolean isReceiver = creatorId != null && !creatorId.isEmpty() && !creatorId.equals(userId);
+
+                    return eventInfoRepo.findByGroupEventIdAndUserId(dto.getGroupEventId(), userId)
+                        .flatMap(userRow -> {
+                            // User already has a batch row: mark as added & sync without altering creator details
+                            userRow.setIsAdded(true);
+                            userRow.setIsSync(true);
+                            userRow.setRsvpStatus("going");
+                            if (isReceiver) {
+                                userRow.setEventTitle(existingEvent.getEventTitle());
+                                userRow.setStartTime(existingEvent.getStartTime());
+                                userRow.setEndTime(existingEvent.getEndTime());
+                                userRow.setEventDetails(existingEvent.getEventDetails());
+                                userRow.setEventColor(existingEvent.getEventColor());
+                                userRow.setMeetingType(existingEvent.getMeetingType());
+                                userRow.setMeetingLink(existingEvent.getMeetingLink());
+                                userRow.setLocation(existingEvent.getLocation());
+                            }
+                            return eventInfoRepo.save(userRow);
+                        })
+                        .switchIfEmpty(Mono.defer(() -> {
+                            EventInfo ev = new EventInfo();
+                            ev.setUserId(userId);
+                            ev.setGroupEventId(groupEventId);
+                            ev.setCreatorId(isReceiver ? existingEvent.getCreatorId() : userId);
+                            ev.setEventTitle(isReceiver ? existingEvent.getEventTitle() : dto.getEventTitle());
+                            ev.setStartTime(isReceiver ? existingEvent.getStartTime() : start);
+                            ev.setEndTime(isReceiver ? existingEvent.getEndTime() : end);
+                            ev.setEventDetails(isReceiver ? existingEvent.getEventDetails() : dto.getEventDetails());
+                            ev.setEventColor(isReceiver ? existingEvent.getEventColor() : (dto.getEventColor() != null ? dto.getEventColor() : "#3b82f6"));
+                            ev.setMsgId(isReceiver ? existingEvent.getMsgId() : dto.getMsgId());
+                            ev.setChatId(isReceiver ? existingEvent.getChatId() : dto.getChatId());
+                            ev.setAction(isReceiver ? existingEvent.getAction() : (dto.getAction() != null ? dto.getAction() : "scheduled"));
+                            ev.setScope("PERSONAL");
+                            ev.setIsAdded(true);
+                            ev.setIsSync(true);
+                            ev.setIsGroupVisible(existingEvent.getIsGroupVisible());
+                            ev.setMeetingType(isReceiver ? existingEvent.getMeetingType() : dto.getMeetingType());
+                            ev.setMeetingLink(isReceiver ? existingEvent.getMeetingLink() : dto.getMeetingLink());
+                            ev.setLocation(isReceiver ? existingEvent.getLocation() : dto.getLocation());
+                            ev.setReminderEnabled(true);
+                            ev.setReminderOffset(reminderOffset);
+                            ev.setCustomReminderTime(dto.getCustomReminderTime());
+                            ev.setRsvpStatus("going");
+                            return eventInfoRepo.save(ev);
+                        }));
+                })
+                .switchIfEmpty(Mono.defer(() -> {
+                    EventInfo ev = new EventInfo();
+                    ev.setUserId(userId);
+                    ev.setGroupEventId(groupEventId);
+                    ev.setCreatorId(userId);
+                    ev.setEventTitle(dto.getEventTitle());
+                    ev.setStartTime(start);
+                    ev.setEndTime(end);
+                    ev.setEventDetails(dto.getEventDetails());
+                    ev.setEventColor(dto.getEventColor() != null ? dto.getEventColor() : "#3b82f6");
+                    ev.setMsgId(dto.getMsgId());
+                    ev.setChatId(dto.getChatId());
+                    ev.setAction(dto.getAction() != null ? dto.getAction() : "scheduled");
+                    ev.setScope("PERSONAL");
+                    ev.setIsAdded(true);
+                    ev.setIsSync(true);
+                    ev.setIsGroupVisible(dto.getIsGroupVisible());
+                    ev.setMeetingType(dto.getMeetingType());
+                    ev.setMeetingLink(dto.getMeetingLink());
+                    ev.setLocation(dto.getLocation());
+                    ev.setReminderEnabled(true);
+                    ev.setReminderOffset(reminderOffset);
+                    ev.setCustomReminderTime(dto.getCustomReminderTime());
+                    ev.setRsvpStatus("going");
+                    return eventInfoRepo.save(ev);
+                }));
+        }
+
+        // Scope "PERSONAL" or private calendar event (truly new event or detected event)
         EventInfo ev = new EventInfo();
         ev.setUserId(userId);
         ev.setGroupEventId(groupEventId);
@@ -213,7 +402,7 @@ public class EventService {
                     if (effectiveCreatorId != null && !effectiveCreatorId.isEmpty()) {
                         return userInfoRepo.findById(effectiveCreatorId)
                             .map(u -> {
-                                ev.setCreatorName(u.getUserName());
+                                ev.setCreatorName(u.getUsername() != null ? u.getUsername() : u.getPublicName());
                                 return ev;
                             })
                             .defaultIfEmpty(ev);
@@ -225,6 +414,40 @@ public class EventService {
 
     // ================= RESCHEDULE & CANCEL GROUP SYNC =================
     public Mono<String> rescheduleOrCancel(GroupEventCreateDTO dto, String userId) {
+        if (dto.getGroupEventId() != null && !dto.getGroupEventId().isEmpty()) {
+            return eventInfoRepo.findByGroupEventId(dto.getGroupEventId())
+                .next()
+                .flatMap(existing -> {
+                    String creatorId = existing.getCreatorId();
+                    if (creatorId != null && !creatorId.trim().isEmpty() && !creatorId.equals(userId)) {
+                        return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.FORBIDDEN,
+                            "Only the event creator can edit or reschedule this event"
+                        ));
+                    }
+                    return performRescheduleOrCancel(dto, userId);
+                })
+                .switchIfEmpty(Mono.defer(() -> performRescheduleOrCancel(dto, userId)));
+        } else if (dto.getChatId() != null && dto.getMsgId() != null) {
+            return eventInfoRepo.findByChatIdAndMsgId(dto.getChatId(), dto.getMsgId())
+                .next()
+                .flatMap(existing -> {
+                    String creatorId = existing.getCreatorId();
+                    if (creatorId != null && !creatorId.trim().isEmpty() && !creatorId.equals(userId)) {
+                        return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.FORBIDDEN,
+                            "Only the event creator can edit or reschedule this event"
+                        ));
+                    }
+                    return performRescheduleOrCancel(dto, userId);
+                })
+                .switchIfEmpty(Mono.defer(() -> performRescheduleOrCancel(dto, userId)));
+        }
+
+        return performRescheduleOrCancel(dto, userId);
+    }
+
+    private Mono<String> performRescheduleOrCancel(GroupEventCreateDTO dto, String userId) {
         Instant start = dto.getStartTime();
         Instant end = dto.getEndTime() != null ? dto.getEndTime() : (start != null ? start.plus(1, ChronoUnit.HOURS) : null);
 
@@ -302,6 +525,7 @@ public class EventService {
                     })
                     .subscribe();
 
+                triggerEventBannerAndNotification(dto.getChatId(), userId, dto.getGroupEventId(), dto.getEventTitle(), dto.getAction(), start);
                 return myWebSocketHandler.broadcastEventSync(dto.getChatId(), userId, syncMsg)
                     .thenReturn("updated");
             }

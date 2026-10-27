@@ -34,12 +34,9 @@ public class ClassRoomService {
         .flatMap(user -> generateChatId()
         .flatMap(chatid->{
             LocalDateTime now=LocalDateTime.now();
-            String defaultName = user.getPublicName();
-            if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
-                if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
-                    defaultName = user.getPrivateName().trim();
-                }
-            }
+            String defaultName = (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty())
+                    ? user.getPrivateName().trim()
+                    : user.getPublicName();
             return userChatInfoRepo.insert(chatid, user.getUserId(), roomname, defaultName, now, now,"classroom","faculty",null,user.getUserProfilePath())
             .flatMap(chat-> generateRoomId()
             .doOnNext(roomid->System.out.println("inside"+chat.getChatId()))

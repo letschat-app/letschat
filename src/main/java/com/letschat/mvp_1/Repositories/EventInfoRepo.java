@@ -113,6 +113,8 @@ public interface EventInfoRepo extends ReactiveCrudRepository<EventInfo, Long> {
         String location
     );
 
+    Flux<EventInfo> findByChatIdAndMsgId(String chatId, String msgId);
+
     // RSVP Update for a user
     @Modifying
     @Query("""

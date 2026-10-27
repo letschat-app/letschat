@@ -35,13 +35,10 @@ public class GroupCreateService {
         return userInfoRepo.findByUserId(UserId)
         .flatMap(user->generateChatId()
         .flatMap(chatid->{
-            LocalDateTime now=LocalDateTime.now();
-            String defaultName = user.getPublicName();
-            if (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()) {
-                if (UsernameSimilarityEvaluator.computeSelfSimilarity(user.getPublicName(), user.getPrivateName()) >= 3.0) {
-                    defaultName = user.getPrivateName().trim();
-                }
-            }
+            LocalDateTime now = LocalDateTime.now();
+            String defaultName = (user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty())
+                    ? user.getPrivateName().trim()
+                    : user.getPublicName();
             final String initialChatName = defaultName;
             return userChatInfoRepo.insert(chatid, user.getUserId(), GroupName, initialChatName, now, now,"group","admin",null,user.getUserProfilePath())
             .flatMap(chat->{ return generateGroupId()

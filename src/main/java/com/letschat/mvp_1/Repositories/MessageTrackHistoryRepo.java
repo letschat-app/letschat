@@ -46,7 +46,7 @@ public interface MessageTrackHistoryRepo extends ReactiveCrudRepository<MessageT
         @Query("""
 update "MessageTrackHistory" mt set "Status"='read', "ReadTime"=:time, "DeliverTime"=COALESCE(mt."DeliverTime", :time) from "MessageInfo" mc join (select * from "UserChat" 
 where "ChatId"=:chatid order by "Id" asc limit 1) uc on mc."ChatId"=uc."Id" 
-where mt."MessageId"=mc."MessageId" and mt."RecieverId"=:userid and (mt."Status"='delivered' or mt."Status"='pending') and mc."SpaceId"=:space
+where mt."MessageId"=mc."MessageId" and mt."RecieverId"=:userid and (mt."Status"='delivered' or mt."Status"='pending') and COALESCE(mc."SpaceId", 0) = COALESCE(:space, 0)
  returning *
                         """)
         Flux<MessageTrackHistory> updateoncheckin(String userid,String chatid,LocalDateTime time,Integer space);

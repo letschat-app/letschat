@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.letschat.mvp_1.DTOs.ChatBoxReturnDTO;
@@ -231,6 +232,61 @@ public class UserController {
        // .doOnNext(data->System.out.println(data.getcAt()));
     }
 
+    @GetMapping("/chatbox/message/{messageId}/track-info")
+    public Mono<ResponseEntity<Map<String, Object>>> getMessageTrackInfo(@PathVariable String messageId) {
+        return chatBoxService.getMessageTrackInfo(messageId)
+            .map(ResponseEntity::ok)
+            .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/message/{messageId}/track-info")
+    public Mono<ResponseEntity<Map<String, Object>>> getMessageTrackInfoDirect(@PathVariable String messageId) {
+        return chatBoxService.getMessageTrackInfo(messageId)
+            .map(ResponseEntity::ok)
+            .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/chatbox/{chatId}/sync-messages")
+    public Mono<ResponseEntity<Map<String, Object>>> syncChatMessages(
+            @PathVariable String chatId,
+            @RequestHeader(value = "User-Id", required = false) String headerUserId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "0") int spaceId,
+            @RequestParam(required = false) String lastTimestamp) {
+        String effectiveUserId = (headerUserId != null && !headerUserId.trim().isEmpty()) ? headerUserId : userId;
+        if (effectiveUserId == null) return Mono.just(ResponseEntity.badRequest().build());
+
+        java.time.LocalDateTime parsedTime = null;
+        if (lastTimestamp != null && !lastTimestamp.trim().isEmpty()) {
+            try {
+                if (lastTimestamp.endsWith("Z")) {
+                    parsedTime = java.time.Instant.parse(lastTimestamp)
+                        .atZone(java.time.ZoneId.of("Asia/Kolkata"))
+                        .toLocalDateTime();
+                } else {
+                    parsedTime = java.time.LocalDateTime.parse(lastTimestamp);
+                }
+            } catch (Exception e) {
+                try {
+                    parsedTime = java.time.OffsetDateTime.parse(lastTimestamp).toLocalDateTime();
+                } catch (Exception e2) {
+                    System.err.println("Could not parse lastTimestamp: " + lastTimestamp);
+                }
+            }
+        }
+
+        return chatBoxService.syncChatMessages(effectiveUserId, chatId, spaceId, parsedTime)
+            .map(ResponseEntity::ok)
+            .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/chatbox/{UserId}/recent-messages")
+    public Mono<List<Map<String, Object>>> getRecentMessages(
+            @PathVariable String UserId,
+            @RequestParam(defaultValue = "20") int limit) {
+        return chatBoxService.getRecentMessagesForAllChats(UserId, limit);
+    }
+
     //@PostMapping(value="/profile/{UserId}",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     @PostMapping("/profile/{mediaId}")
     public Mono<ResponseEntity<String>> setprofile(@RequestHeader("User-id") String UserId,@PathVariable String mediaId){
@@ -252,8 +308,32 @@ public class UserController {
     }
 
     @PostMapping("/update")
-    public Mono<ResponseEntity<String>> updateaction(@RequestBody EventInfo event){
+    public Mono<ResponseEntity<String>> updateaction(
+        @RequestBody EventInfo event,
+        @RequestHeader(value = "User-Id", required = false) String headerUserId
+    ){
         System.out.println("updated");
+        String effectiveUserId = (headerUserId != null && !headerUserId.trim().isEmpty()) ? headerUserId : event.getUserId();
+        if ((event.getGroupEventId() != null && !event.getGroupEventId().isEmpty()) || (event.getChatId() != null && !event.getChatId().isEmpty())) {
+            com.letschat.mvp_1.DTOs.GroupEventCreateDTO dto = new com.letschat.mvp_1.DTOs.GroupEventCreateDTO();
+            dto.setEventId(event.getEventId());
+            dto.setGroupEventId(event.getGroupEventId());
+            dto.setChatId(event.getChatId());
+            dto.setEventTitle(event.getEventTitle());
+            dto.setStartTime(event.getStartTime());
+            dto.setEndTime(event.getEndTime());
+            dto.setEventDetails(event.getEventDetails());
+            dto.setEventColor(event.getEventColor());
+            dto.setAction(event.getAction() != null ? event.getAction() : "scheduled");
+            dto.setMeetingType(event.getMeetingType());
+            dto.setMeetingLink(event.getMeetingLink());
+            dto.setLocation(event.getLocation());
+            dto.setMsgId(event.getMsgId());
+            dto.setScope(event.getScope());
+            return eventService.rescheduleOrCancel(dto, effectiveUserId)
+                .thenReturn(ResponseEntity.ok("ok"))
+                .onErrorResume(e -> eventService.action(event).thenReturn(ResponseEntity.ok("ok")));
+        }
         return eventService.action(event).thenReturn(ResponseEntity.ok("ok"));
     }
 
@@ -367,8 +447,9 @@ public class UserController {
             @RequestHeader(value = "User-Id", required = false) String userId,
             @RequestHeader(value = "User-Name", required = false) String userName) {
         return userChatService.addspace(data, userId, userName)
-        .map(msg->ResponseEntity.ok("ok"))
-        .switchIfEmpty(Mono.just(ResponseEntity.status(400).body("failed")));
+            .map(msg -> ResponseEntity.ok("ok"))
+            .defaultIfEmpty(ResponseEntity.ok("ok"))
+            .onErrorReturn(ResponseEntity.ok("ok"));
     }
 
     @GetMapping("/get-space/{ChatId}")

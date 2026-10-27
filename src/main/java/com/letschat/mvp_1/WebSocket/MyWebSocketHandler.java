@@ -275,7 +275,8 @@ public void removeUserFromChatCache(String chatId, String userId) {
             }
 
             return userChatInfoRepo.findTypeByChatId(chatid)
-            .doOnNext(type1->chatypes.putIfAbsent(chatid,type1));
+            .doOnNext(type1->chatypes.putIfAbsent(chatid,type1))
+            .defaultIfEmpty("private");
         });
     }
 
@@ -848,6 +849,7 @@ private void fireNotification(String receiverId, String chatId,
 
                         switch (purpose) {
                             case "load": {
+                                LocalDateTime now = LocalDateTime.now();
                                 if (!isRoomOrClassroom) {
                                     userstatus.compute(Userid, (key, chatmap) -> {
                                         if (chatmap == null) chatmap = new ConcurrentHashMap<>();
@@ -855,33 +857,77 @@ private void fireNotification(String receiverId, String chatId,
                                         return chatmap;
                                     });
                                 }
-                                Integer space = Integer.parseInt(data.getmsgid());
-                                Flux<com.letschat.mvp_1.DTOs.LoadMessageDTO> msgsFlux = isRoomOrClassroom ?
-                                        messageInfoRepo.loadforroom(Userid, chatId, space, LocalDateTime.now()) :
-                                        messageInfoRepo.load(Userid, chatId, space, LocalDateTime.now());
+                                int space = 0;
+                                if (data.getmsgid() != null && !data.getmsgid().trim().isEmpty()) {
+                                    try {
+                                        space = Integer.parseInt(data.getmsgid().trim());
+                                    } catch (Exception e) {
+                                        space = 0;
+                                    }
+                                }
+                                notificationService.clear(Userid, chatId);
 
-                                return msgsFlux.collectList()
-                                    .flatMap(msgs -> pollService.enrichPollMessages(msgs, Userid))
-                                    .flatMap(msgs -> {
-                                        Map<String, Object> batch = new HashMap<>();
-                                        batch.put("type", "batch");
-                                        batch.put("chatid", chatId);
-                                        batch.put("hasmore", msgs.size() == 60);
-                                        batch.put("msgs", msgs);
-                                        notificationService.clear(Userid, chatId);
-                                        return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
-                                            .doOnNext(sender_sink::tryEmitNext)
-                                            .onErrorResume(e -> {
-                                                System.out.println(e);
-                                                return Mono.empty();
-                                            });
-                                    }).then();
+                                Mono<Void> checkInMono = isRoomOrClassroom ? Mono.empty() :
+                                    messageTrackHistoryRepo.updateoncheckin(Userid, chatId, now, space)
+                                        .collectList()
+                                        .flatMap(updatedMsgs -> {
+                                            if (updatedMsgs.isEmpty()) return Mono.empty();
+                                            Map<String, List<String>> senderMsgMap = updatedMsgs.stream()
+                                                .collect(Collectors.groupingBy(
+                                                    com.letschat.mvp_1.Models.MessageTrackHistory::getSenderId,
+                                                    Collectors.mapping(com.letschat.mvp_1.Models.MessageTrackHistory::getMessageId, Collectors.toList())
+                                                ));
+                                            return Flux.fromIterable(senderMsgMap.entrySet())
+                                                .flatMap(entry -> {
+                                                    String senderId = entry.getKey();
+                                                    List<String> msgIds = entry.getValue();
+                                                    if (usersink.containsKey(senderId)) {
+                                                        ACKMessageDTO ack = new ACKMessageDTO(chatId, msgIds, "read", now);
+                                                    ack.setread_users(java.util.Collections.singletonList(Userid));
+                                                        ack.setread_users(java.util.Collections.singletonList(Userid));
+                                                        Sinks.Many<String> ackSink = usersink.get(senderId);
+                                                        return sendToSinkAsync(ackSink, ack);
+                                                    }
+                                                    return Mono.empty();
+                                                })
+                                                .then();
+                                        });
+
+                                Flux<com.letschat.mvp_1.DTOs.LoadMessageDTO> msgsFlux = isRoomOrClassroom ?
+                                        messageInfoRepo.loadforroom(Userid, chatId, space, now) :
+                                        messageInfoRepo.load(Userid, chatId, space, now);
+
+                                return checkInMono.then(
+                                    msgsFlux.collectList()
+                                        .flatMap(msgs -> pollService.enrichPollMessages(msgs, Userid))
+                                        .flatMap(msgs -> {
+                                            Map<String, Object> batch = new HashMap<>();
+                                            batch.put("type", "batch");
+                                            batch.put("chatid", chatId);
+                                            batch.put("hasmore", msgs.size() == 60);
+                                            batch.put("msgs", msgs);
+                                            return Mono.fromCallable(() -> objectMapper.writeValueAsString(batch))
+                                                .doOnNext(sender_sink::tryEmitNext)
+                                                .onErrorResume(e -> {
+                                                    System.out.println(e);
+                                                    return Mono.empty();
+                                                });
+                                        }).then()
+                                );
                             }
                             case "load-more": {
-                                Integer space = Integer.parseInt(data.getmsgid());
+                                int space = 0;
+                                if (data.getmsgid() != null && !data.getmsgid().trim().isEmpty()) {
+                                    try {
+                                        space = Integer.parseInt(data.getmsgid().trim());
+                                    } catch (Exception e) {
+                                        space = 0;
+                                    }
+                                }
+                                LocalDateTime before = data.gettime() != null ? data.gettime() : LocalDateTime.now();
                                 Flux<com.letschat.mvp_1.DTOs.LoadMessageDTO> msgsFlux = isRoomOrClassroom ?
-                                        messageInfoRepo.loadforroom(Userid, chatId, space, data.gettime()) :
-                                        messageInfoRepo.load(Userid, chatId, space, data.gettime());
+                                        messageInfoRepo.loadforroom(Userid, chatId, space, before) :
+                                        messageInfoRepo.load(Userid, chatId, space, before);
 
                                 return msgsFlux.collectList()
                                     .flatMap(msgs -> pollService.enrichPollMessages(msgs, Userid))
@@ -1034,6 +1080,7 @@ private void fireNotification(String receiverId, String chatId,
 
                                                 if (usersink.containsKey(senderId)) {
                                                     ACKMessageDTO ack = new ACKMessageDTO(chatId, msgIds, "read", now);
+                                                    ack.setread_users(java.util.Collections.singletonList(Userid));
                                                     Sinks.Many<String> ackSink = usersink.get(senderId);
                                                     return sendToSinkAsync(ackSink, ack);
                                                 }
@@ -1073,6 +1120,7 @@ private void fireNotification(String receiverId, String chatId,
 
                                                 if (usersink.containsKey(senderId)) {
                                                     ACKMessageDTO ack = new ACKMessageDTO(chatId, msgIds, "media-opened", now);
+                                                    ack.setread_users(java.util.Collections.singletonList(Userid));
                                                     Sinks.Many<String> ackSink = usersink.get(senderId);
                                                     return sendToSinkAsync(ackSink, ack);
                                                 }
@@ -1327,6 +1375,33 @@ private void fireNotification(String receiverId, String chatId,
                     }).then();
         }).then();
 
+    }
+
+    public Mono<Void> broadcastBannerPin(String chatId, String msgId, String senderId, String othersContent, String youContent, String messageType, String eventId, java.time.LocalDateTime now) {
+        return getUserIds(chatId, null)
+            .flatMap(targetUserId -> {
+                reactor.core.publisher.Sinks.Many<String> receiverSink = usersink.get(targetUserId);
+                SendingMessageDTO msg = new SendingMessageDTO();
+                msg.setmsgid(msgId);
+                msg.setchatid(chatId);
+                msg.settype(messageType);
+                msg.setcontent(senderId != null && senderId.equals(targetUserId) ? youContent : othersContent);
+                msg.setsendername("server");
+                msg.setsenderid(senderId);
+                msg.settimestamp(now);
+                msg.setspaceid(0);
+                msg.setrepliedto(eventId);
+                try {
+                    String sendJson = objectMapper.writeValueAsString(msg);
+                    if (receiverSink != null) {
+                        receiverSink.tryEmitNext(sendJson);
+                    }
+                } catch (Exception e) {
+                    System.err.println("broadcastBannerPin error: " + e.getMessage());
+                }
+                return Mono.empty();
+            })
+            .then();
     }
 
     public Mono<Void> send(ScheduleMessage msg) {
