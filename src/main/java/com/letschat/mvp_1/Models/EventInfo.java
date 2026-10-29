@@ -12,7 +12,9 @@ public class EventInfo {
     private Long eventId;
     private String userId;
     private String eventTitle;
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
     private Instant startTime;
+    @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING)
     private Instant endTime;
     private String eventDetails;
     private String eventColor;

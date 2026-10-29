@@ -428,8 +428,8 @@ public class EventService {
                     return performRescheduleOrCancel(dto, userId);
                 })
                 .switchIfEmpty(Mono.defer(() -> performRescheduleOrCancel(dto, userId)));
-        } else if (dto.getChatId() != null && dto.getMsgId() != null) {
-            return eventInfoRepo.findByChatIdAndMsgId(dto.getChatId(), dto.getMsgId())
+        } else if (dto.getChatId() != null && dto.getMsgId() != null && !dto.getMsgId().trim().isEmpty()) {
+            return eventInfoRepo.findByChatIdAndMsgId(dto.getChatId(), dto.getMsgId().trim())
                 .next()
                 .flatMap(existing -> {
                     String creatorId = existing.getCreatorId();
@@ -466,10 +466,10 @@ public class EventService {
                 dto.getMeetingLink(),
                 dto.getLocation()
             );
-        } else if (dto.getChatId() != null && dto.getMsgId() != null) {
+        } else if (dto.getChatId() != null && dto.getMsgId() != null && !dto.getMsgId().trim().isEmpty()) {
             syncMono = eventInfoRepo.syncByChatAndMsgId(
                 dto.getChatId(),
-                dto.getMsgId(),
+                dto.getMsgId().trim(),
                 dto.getEventTitle(),
                 start,
                 end,
@@ -480,6 +480,21 @@ public class EventService {
                 dto.getMeetingLink(),
                 dto.getLocation()
             );
+        } else if (dto.getEventId() != null) {
+            syncMono = eventInfoRepo.findById(dto.getEventId())
+                .flatMap(existing -> {
+                    existing.setEventTitle(dto.getEventTitle());
+                    existing.setStartTime(start);
+                    existing.setEndTime(end);
+                    existing.setEventDetails(dto.getEventDetails());
+                    existing.setEventColor(dto.getEventColor());
+                    existing.setAction(dto.getAction());
+                    existing.setMeetingType(dto.getMeetingType());
+                    existing.setMeetingLink(dto.getMeetingLink());
+                    existing.setLocation(dto.getLocation());
+                    return eventInfoRepo.save(existing).thenReturn(1);
+                })
+                .defaultIfEmpty(0);
         }
 
         return syncMono.flatMap(rowsUpdated -> {

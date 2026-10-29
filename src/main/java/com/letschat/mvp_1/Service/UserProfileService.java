@@ -22,6 +22,7 @@ public class UserProfileService {
     public Mono<String> upload(String mediaId, String UserId){
         return userInfoRepo.updateprofile(mediaId, UserId)
             .flatMap(info -> userChatInfoRepo.propagateProfilePicture(UserId, mediaId)
+                .then(userChatInfoRepo.propagateProfilePictureToPeerChats(UserId, mediaId))
                 .thenReturn("success " + info.getUserProfilePath()))
             .switchIfEmpty(Mono.just("failed"));
     }

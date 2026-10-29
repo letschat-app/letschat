@@ -205,6 +205,19 @@ public void removeUsernameCache(String chatId, String userId) {
         }
     }
 }
+
+public void invalidateUserCache(String userId) {
+    if (userId == null) return;
+    username.values().forEach(map -> map.remove(userId));
+}
+
+public void invalidateChatMembers(String chatId) {
+    if (chatId == null) return;
+    userchats.remove(chatId);
+    chatypes.remove(chatId);
+    username.remove(chatId);
+}
+
 public Flux<String> getUserIds(String chatId, String userId) {
 
     return Flux.defer(() -> {
@@ -437,7 +450,7 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                                     pendingUsers,
                                                     deliveredUsers,
                                                     readUsers,
-                                                    LocalDateTime.now()
+                                                    LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"))
                                                 )
                                                 .then(messageTrackHistoryRepo.batchInsert(msgId, userId, receiverIds, statuses, deliveredTimes));
                                             });
@@ -508,7 +521,7 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                         .map(MessageResult::receiverId)
                                         .toList();
 
-                                    LocalDateTime now = LocalDateTime.now();
+                                    LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
                                     return sendAckAsync(
                                         senderSink,
@@ -657,7 +670,7 @@ private Mono<MessageResult> sendMessage(
                 : "delivered";
 
         LocalDateTime deliveredTime =
-            LocalDateTime.now();
+            LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
         return sendToSinkAsync(
             receiverSink,
@@ -708,7 +721,7 @@ private Mono<MessageResult> sendMessageWithPoll(
         userstatus.computeIfAbsent(receiverId, k -> new ConcurrentHashMap<>()).putIfAbsent(chatId, "in-active");
         boolean isActive = "active".equals(userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId));
         String status = isActive ? "read" : "delivered";
-        LocalDateTime deliveredTime = LocalDateTime.now();
+        LocalDateTime deliveredTime = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
         return sendToSinkAsync(receiverSink, msg).thenReturn(new MessageResult(receiverId, status, deliveredTime));
     }
@@ -849,7 +862,7 @@ private void fireNotification(String receiverId, String chatId,
 
                         switch (purpose) {
                             case "load": {
-                                LocalDateTime now = LocalDateTime.now();
+                                LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
                                 if (!isRoomOrClassroom) {
                                     userstatus.compute(Userid, (key, chatmap) -> {
                                         if (chatmap == null) chatmap = new ConcurrentHashMap<>();
@@ -924,7 +937,7 @@ private void fireNotification(String receiverId, String chatId,
                                         space = 0;
                                     }
                                 }
-                                LocalDateTime before = data.gettime() != null ? data.gettime() : LocalDateTime.now();
+                                LocalDateTime before = data.gettime() != null ? data.gettime() : LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
                                 Flux<com.letschat.mvp_1.DTOs.LoadMessageDTO> msgsFlux = isRoomOrClassroom ?
                                         messageInfoRepo.loadforroom(Userid, chatId, space, before) :
                                         messageInfoRepo.load(Userid, chatId, space, before);
@@ -1045,7 +1058,7 @@ private void fireNotification(String receiverId, String chatId,
                                     });
                             }
                             case "check-in": {
-                                LocalDateTime now = LocalDateTime.now();
+                                LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
                                 System.out.println("check in " + chatId);
                                 userstatus.compute(Userid, (key, chatmap) -> {
                                     if (chatmap == null) chatmap = new ConcurrentHashMap<>();
@@ -1099,7 +1112,7 @@ private void fireNotification(String receiverId, String chatId,
                                 return Mono.empty();
                             }
                             case "media-opened": {
-                                LocalDateTime now = LocalDateTime.now();
+                                LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
                                 String msgid = data.getmsgid();
                                 System.out.println("media-opened " + msgid + " in " + chatId + " by " + Userid);
                                 return messageTrackHistoryRepo.updateonmediaopened(Userid, msgid, now)
@@ -1211,7 +1224,7 @@ private void fireNotification(String receiverId, String chatId,
     public Mono<Void> onconnect(String Userid){
         System.out.println("onconnect");
         Sinks.Many<String> sender_sink = usersink.get(Userid);
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
         Mono<Void> sendPendingMono = messageInfoRepo.loadpending(Userid)
             .doOnNext(msg0 -> {
@@ -1360,7 +1373,7 @@ private void fireNotification(String receiverId, String chatId,
                                     //status="read";
                                     status.set("read");
                                 }
-                                //deltime.set(LocalDateTime.now());
+                                //deltime.set(LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
                             }
                             else{
                                 System.out.println("User is offline");
@@ -1370,7 +1383,7 @@ private void fireNotification(String receiverId, String chatId,
                         } catch (JsonProcessingException e) {
                             System.out.println("in send"+e);
                         }
-                        return messageTrackHistoryRepo.insert(msgId, Userid, userids, status.get(), LocalDateTime.now())
+                        return messageTrackHistoryRepo.insert(msgId, Userid, userids, status.get(), LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")))
                         .then(Mono.just("inserted"));
                     }).then();
         }).then();
@@ -1462,7 +1475,7 @@ private void fireNotification(String receiverId, String chatId,
                 receiverSink.tryEmitNext(sendjson);
 
                 status = "delivered";
-                delTime = LocalDateTime.now();
+                delTime = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
                 userstatus
                         .computeIfAbsent(uid, k -> new ConcurrentHashMap<>())

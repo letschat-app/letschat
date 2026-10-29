@@ -79,6 +79,12 @@ public class NotificationService {
         }
     }
 
+    public void invalidateTokenCache(String userId) {
+        if (userId != null) {
+            tokenCache.remove(userId);
+        }
+    }
+
     public Flux<String> getTokens(String userId) {
         Set<String> cached = tokenCache.get(userId);
         if (cached != null && !cached.isEmpty()) {
@@ -123,6 +129,14 @@ public class NotificationService {
     // ================= MUTE HELPER =================
     public void updateMuteCache(String userId, String chatId, boolean isMuted) {
         muteCache.put(userId + ":" + chatId, isMuted);
+    }
+
+    public void invalidateMuteCache(String userId, String chatId) {
+        if (userId != null && chatId != null) {
+            muteCache.remove(userId + ":" + chatId);
+        } else if (userId != null) {
+            muteCache.keySet().removeIf(k -> k.startsWith(userId + ":"));
+        }
     }
 
     public Mono<Boolean> isChatMuted(String userId, String chatId) {

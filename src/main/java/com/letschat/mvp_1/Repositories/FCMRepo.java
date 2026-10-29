@@ -25,10 +25,11 @@ public interface FCMRepo extends ReactiveCrudRepository<UserTokenModel,String>{
     Flux<String> getTokens(String userId);
 
     @Query("""
-        DELETE FROM "UserFCMToken" where
-        device_id = :deviceId
+        DELETE FROM "UserFCMToken"
+        WHERE device_id = :deviceId
+        RETURNING user_id, device_id, fcm_token
     """)
-    Mono<Void> deleteToken(String deviceId);
+    Mono<UserTokenModel> deleteToken(String deviceId);
 
     @Query("""
         SELECT user_id, fcm_token

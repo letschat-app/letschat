@@ -46,4 +46,24 @@ public class PollController {
             .onErrorResume(IllegalArgumentException.class, ex -> Mono.just(ResponseEntity.badRequest().body((Object) ex.getMessage())))
             .onErrorResume(ex -> Mono.just(ResponseEntity.status(500).body((Object) ex.getMessage())));
     }
+
+    @Operation(summary = "Get Poll Details by Message ID")
+    @GetMapping("/by-msg/{msgId}")
+    public Mono<ResponseEntity<Object>> getPollByMsgId(
+            @PathVariable String msgId,
+            @RequestHeader(value = "User-Id", required = false) String userId) {
+        return pollService.buildPollUpdateDTO(null, msgId, userId)
+            .map(dto -> ResponseEntity.ok((Object) dto))
+            .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
+    @Operation(summary = "Get Poll Details by Poll ID")
+    @GetMapping("/{pollId}")
+    public Mono<ResponseEntity<Object>> getPollById(
+            @PathVariable Long pollId,
+            @RequestHeader(value = "User-Id", required = false) String userId) {
+        return pollService.buildPollUpdateDTO(pollId, null, userId)
+            .map(dto -> ResponseEntity.ok((Object) dto))
+            .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
 }

@@ -313,6 +313,9 @@ public class UserController {
         @RequestHeader(value = "User-Id", required = false) String headerUserId
     ){
         System.out.println("updated");
+        if (event.getEventId() == null && (event.getGroupEventId() == null || event.getGroupEventId().isEmpty()) && (event.getMsgId() == null || event.getMsgId().isEmpty())) {
+            return Mono.just(ResponseEntity.ok("ok"));
+        }
         String effectiveUserId = (headerUserId != null && !headerUserId.trim().isEmpty()) ? headerUserId : event.getUserId();
         if ((event.getGroupEventId() != null && !event.getGroupEventId().isEmpty()) || (event.getChatId() != null && !event.getChatId().isEmpty())) {
             com.letschat.mvp_1.DTOs.GroupEventCreateDTO dto = new com.letschat.mvp_1.DTOs.GroupEventCreateDTO();
@@ -366,8 +369,17 @@ public class UserController {
 
                 return userInfoRepo.updateDisplayNameAtomic(cleanDisplayName, now, cooldownThreshold, userId)
                     .flatMap(updatedUser -> {
-                        // Cascading update to uncustomized chats
+                        // Cascading update to uncustomized chats and peer rows
                         return userChatInfoRepo.propagateDisplayName(userId, cleanDisplayName)
+                            .then(userChatInfoRepo.propagateDisplayNameToPeerChats(userId, cleanDisplayName))
+                            .then(Mono.fromRunnable(() -> myWebSocketHandler.invalidateUserCache(userId)))
+                            .then(
+                                userChatInfoRepo.findUncustomizedChatIds(userId)
+                                    .flatMap(cId -> userChatInfoRepo.getUsername(cId, userId)
+                                        .defaultIfEmpty(user.getPublicName())
+                                        .flatMap(oldName -> myWebSocketHandler.announce(cId, "username_change", oldName, cleanDisplayName, userId)))
+                                    .then()
+                            )
                             .thenReturn(ResponseEntity.ok().<Object>body(Map.of(
                                 "status", "SUCCESS",
                                 "displayName", updatedUser.getPrivateName(),
@@ -455,6 +467,12 @@ public class UserController {
     @GetMapping("/get-space/{ChatId}")
     public Mono<List<ChatSpace>> getspace(@PathVariable String ChatId){
         return userChatService.getspace(ChatId).collectList();
+    }
+
+    @GetMapping("/get-space")
+    public Mono<List<ChatSpace>> getspaceByQuery(@RequestParam(required = false) String chatId){
+        if (chatId == null || chatId.trim().isEmpty()) return Mono.just(java.util.Collections.emptyList());
+        return userChatService.getspace(chatId.trim()).collectList();
     }
 
     @PostMapping("/check-status")

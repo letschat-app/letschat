@@ -34,7 +34,14 @@ public class UserTokenService {
     // DELETE TOKEN
     // =========================
     public Mono<Void> removeToken(String deviceId) {
-        return fcmRepo.deleteToken(deviceId);
+        return fcmRepo.deleteToken(deviceId)
+                .doOnNext(deleted -> {
+                    if (deleted != null && deleted.getUserId() != null) {
+                        notificationService.removeToken(deleted.getUserId(), deleted.getFcmToken());
+                        notificationService.invalidateTokenCache(deleted.getUserId());
+                    }
+                })
+                .then();
     }
 
     // =========================

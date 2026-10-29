@@ -56,12 +56,12 @@ public class UploadMediaService {
         String thumbKey = null;
         String thumbUrl = null;
 
-        if (folder.equals("images") || folder.equals("videos")) {
+        if (folder.equals("images") || folder.equals("videos") || "application/pdf".equals(mime)) {
 
             String thumbExt = ext;
             String thumbMime = mime;
 
-            if (folder.equals("videos")) {
+            if (folder.equals("videos") || "application/pdf".equals(mime)) {
                 thumbExt = ".webp";
                 thumbMime = "image/webp";
             }

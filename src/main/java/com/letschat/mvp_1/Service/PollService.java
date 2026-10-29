@@ -69,7 +69,7 @@ public class PollService {
             cleanOptions.add(trimmed);
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
         if (dto.getexpires_at() != null) {
             if (dto.getexpires_at().isBefore(now)) {
                 return Mono.error(new IllegalArgumentException("expires_at must be in the future"));
@@ -117,10 +117,11 @@ public class PollService {
     }
 
     public Mono<PollUpdateDTO> buildPollUpdateDTO(Long pollId, String msgId, String requestingUserId) {
-        return pollRepo.findById(pollId)
+        Mono<Poll> pollMono = pollId != null ? pollRepo.findById(pollId) : (msgId != null ? pollRepo.findByMsgId(msgId) : Mono.empty());
+        return pollMono
             .flatMap(poll -> {
                 String effectiveMsgId = msgId != null ? msgId : poll.getMsgId();
-                boolean isExpired = poll.getExpiresAt() != null && LocalDateTime.now().isAfter(poll.getExpiresAt());
+                boolean isExpired = poll.getExpiresAt() != null && LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")).isAfter(poll.getExpiresAt());
 
                 Mono<Long> totalMembersMono = databaseClient.sql("SELECT COUNT(*) FROM \"UserChat\" WHERE \"ChatId\" = :chatId AND \"Status\" = 'allowed'")
                     .bind("chatId", poll.getChatId())
@@ -188,7 +189,7 @@ public class PollService {
                     return Mono.error(new IllegalArgumentException("Invalid poll message link"));
                 }
 
-                if (poll.getExpiresAt() != null && LocalDateTime.now().isAfter(poll.getExpiresAt())) {
+                if (poll.getExpiresAt() != null && LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")).isAfter(poll.getExpiresAt())) {
                     return Mono.error(new IllegalStateException("Poll has expired"));
                 }
 
@@ -208,7 +209,7 @@ public class PollService {
                             }
                         }
 
-                        LocalDateTime now = LocalDateTime.now();
+                        LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
                         List<PollVote> newVotes = cleanOptionIds.stream()
                             .map(optId -> new PollVote(poll.getId(), optId, userId, now))
                             .toList();
@@ -238,7 +239,7 @@ public class PollService {
                 if (!Boolean.TRUE.equals(poll.getAllowUserOptions())) {
                     return Mono.error(new IllegalArgumentException("User-added options are not allowed for this poll"));
                 }
-                if (poll.getExpiresAt() != null && LocalDateTime.now().isAfter(poll.getExpiresAt())) {
+                if (poll.getExpiresAt() != null && LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")).isAfter(poll.getExpiresAt())) {
                     return Mono.error(new IllegalStateException("Poll has expired"));
                 }
 
@@ -252,8 +253,18 @@ public class PollService {
                                 if (Boolean.TRUE.equals(exists)) {
                                     return Mono.error(new IllegalArgumentException("Duplicate option text"));
                                 }
-                                PollOption newOpt = new PollOption(null, poll.getId(), cleanText, userId, LocalDateTime.now());
-                                return pollOptionRepo.save(newOpt).thenReturn(poll.getId());
+                                PollOption newOpt = new PollOption(null, poll.getId(), cleanText, userId, LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
+                                return pollOptionRepo.save(newOpt)
+                                    .flatMap(savedOpt -> {
+                                        PollVote vote = new PollVote(poll.getId(), savedOpt.getId(), userId, LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
+                                        if (!Boolean.TRUE.equals(poll.getAllowMultiple())) {
+                                            return pollVoteRepo.deleteByPollIdAndUserId(poll.getId(), userId)
+                                                .then(pollVoteRepo.save(vote))
+                                                .thenReturn(poll.getId());
+                                        } else {
+                                            return pollVoteRepo.save(vote).thenReturn(poll.getId());
+                                        }
+                                    });
                             });
                     });
             })
@@ -308,7 +319,7 @@ public class PollService {
                                 Poll poll = pollByMsgId.get(msg.getmsgid());
                                 if (poll != null) {
                                     Long pollId = poll.getId();
-                                    boolean isExpired = poll.getExpiresAt() != null && LocalDateTime.now().isAfter(poll.getExpiresAt());
+                                    boolean isExpired = poll.getExpiresAt() != null && LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")).isAfter(poll.getExpiresAt());
 
                                     List<PollOption> pollOpts = optionsByPollId.getOrDefault(pollId, Collections.emptyList());
                                     List<PollVoteRepo.VoteRecord> pollVotes = votesByPollId.getOrDefault(pollId, Collections.emptyList());
@@ -356,7 +367,7 @@ public class PollService {
     }
 
     public Mono<Integer> deleteUnlinkedPolls() {
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(1);
+        LocalDateTime cutoff = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")).minusHours(1);
         return pollRepo.deleteUnlinkedPolls(cutoff);
     }
 }

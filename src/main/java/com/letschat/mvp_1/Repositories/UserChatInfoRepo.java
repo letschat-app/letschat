@@ -115,11 +115,42 @@ group by "ChatId" having count(distinct "UserId")=2
         @Modifying
         @Query("""
                 UPDATE "UserChat"
+                SET "ChatName" = :newDisplayName
+                WHERE "ChatId" IN (
+                    SELECT "ChatId" FROM "UserChat" WHERE "UserId" = :userId AND "Type" = 'private'
+                )
+                AND "UserId" != :userId
+                AND ("IsCustomName" IS FALSE OR "IsCustomName" IS NULL)
+                """)
+        Mono<Integer> propagateDisplayNameToPeerChats(String userId, String newDisplayName);
+
+        @Modifying
+        @Query("""
+                UPDATE "UserChat"
                 SET "UserProfile" = :newProfilePath
                 WHERE "UserId" = :userId
                   AND ("IsCustomProfile" IS FALSE OR "IsCustomProfile" IS NULL)
                 """)
         Mono<Integer> propagateProfilePicture(String userId, String newProfilePath);
+
+        @Modifying
+        @Query("""
+                UPDATE "UserChat"
+                SET "ChatProfile" = :newProfilePath
+                WHERE "ChatId" IN (
+                    SELECT "ChatId" FROM "UserChat" WHERE "UserId" = :userId AND "Type" = 'private'
+                )
+                AND "UserId" != :userId
+                AND ("IsCustomProfile" IS FALSE OR "IsCustomProfile" IS NULL)
+                """)
+        Mono<Integer> propagateProfilePictureToPeerChats(String userId, String newProfilePath);
+
+        @Query("""
+                SELECT "ChatId" FROM "UserChat"
+                WHERE "UserId" = :userId
+                  AND ("IsCustomName" IS FALSE OR "IsCustomName" IS NULL)
+                """)
+        Flux<String> findUncustomizedChatIds(String userId);
 
         @Query("""
                 SELECT "UserName" FROM "UserChat" 
