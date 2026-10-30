@@ -34,7 +34,7 @@ public interface GroupInfoRepo extends ReactiveCrudRepository<GroupInfoModel, St
             Flux<GroupInfoModel> get(String chatid);
 
     @Query("""
-            select * from "UserChat" where "ChatId"=:chatid and "Status"='allowed'
+            select * from "UserChat" where "ChatId"=:chatid and ("Status"='allowed' or "Status" is null)
             """)
             Flux<UserChatInfo> getMembers(String chatid);
 

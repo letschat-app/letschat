@@ -24,6 +24,14 @@ public interface UserInfoRepo extends ReactiveCrudRepository<UserInfo, String>{
     @Query("select * from \"UserInfo\" where \"UserId\"=:UserId")
     Mono<UserInfo> findByUserId(String UserId);
 
+    @Query("select * from \"UserInfo\" where \"UserId\"=:id")
+    @Override
+    Mono<UserInfo> findById(String id);
+
+    @Query("select exists(select 1 from \"UserInfo\" where \"UserId\"=:id)")
+    @Override
+    Mono<Boolean> existsById(String id);
+
     @Query("select * from \"UserInfo\"")
     @Override
     Flux<UserInfo> findAll();

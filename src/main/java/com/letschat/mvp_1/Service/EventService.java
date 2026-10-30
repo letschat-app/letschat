@@ -98,6 +98,7 @@ public class EventService {
         if (chatId == null || chatId.isEmpty() || userId == null || userId.isEmpty()) return;
 
         userInfoRepo.findById(userId)
+            .defaultIfEmpty(new UserInfo())
             .flatMap(user -> {
                 String rawUserName = user.getUsername() != null ? user.getUsername() : user.getPublicName();
                 final String userName = (rawUserName != null && !rawUserName.trim().isEmpty()) ? rawUserName.trim() : "User";
@@ -233,8 +234,15 @@ public class EventService {
                     final EventInfo finalCreatorEvent = creatorEvent != null ? creatorEvent : batch.get(0);
 
                     return eventInfoRepo.saveAll(batch)
-                        .filter(saved -> saved.getUserId().equals(userId))
-                        .next()
+                        .collectList()
+                        .map(savedList -> {
+                            for (EventInfo ev : savedList) {
+                                if (userId.equals(ev.getUserId())) {
+                                    return ev;
+                                }
+                            }
+                            return finalCreatorEvent;
+                        })
                         .defaultIfEmpty(finalCreatorEvent)
                         .doOnSuccess(saved -> {
                             // Broadcast event_sync frame to all group members over WebSocket
@@ -367,7 +375,7 @@ public class EventService {
 
         return eventInfoRepo.save(ev)
             .doOnSuccess(saved -> {
-                if (dto.getChatId() != null && dto.getIsGroupVisible()) {
+                if (dto.getChatId() != null && Boolean.TRUE.equals(dto.getIsGroupVisible())) {
                     EventSyncMessageDTO syncMsg = new EventSyncMessageDTO();
                     syncMsg.setType("event_sync");
                     syncMsg.setGroupEventId(groupEventId);
@@ -405,7 +413,8 @@ public class EventService {
                                 ev.setCreatorName(u.getUsername() != null ? u.getUsername() : u.getPublicName());
                                 return ev;
                             })
-                            .defaultIfEmpty(ev);
+                            .defaultIfEmpty(ev)
+                            .onErrorReturn(ev);
                     }
                     return Mono.just(ev);
                 });
