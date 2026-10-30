@@ -98,9 +98,15 @@ public class EventService {
         if (chatId == null || chatId.isEmpty() || userId == null || userId.isEmpty()) return;
 
         userInfoRepo.findById(userId)
+            .onErrorResume(err -> {
+                System.err.println("[EventService] Failed to find user for banner: " + err.getMessage());
+                return Mono.empty();
+            })
             .defaultIfEmpty(new UserInfo())
             .flatMap(user -> {
-                String rawUserName = user.getUsername() != null ? user.getUsername() : user.getPublicName();
+                String rawUserName = user.getPrivateName() != null && !user.getPrivateName().trim().isEmpty()
+                    ? user.getPrivateName().trim()
+                    : (user.getUsername() != null ? user.getUsername() : user.getPublicName());
                 final String userName = (rawUserName != null && !rawUserName.trim().isEmpty()) ? rawUserName.trim() : "User";
                 final String safeTitle = (eventTitle != null && !eventTitle.trim().isEmpty()) ? eventTitle.trim() : "Event";
                 final String actionLower = (action != null) ? action.trim().toLowerCase() : "scheduled";
@@ -375,7 +381,7 @@ public class EventService {
 
         return eventInfoRepo.save(ev)
             .doOnSuccess(saved -> {
-                if (dto.getChatId() != null && Boolean.TRUE.equals(dto.getIsGroupVisible())) {
+                if (dto.getChatId() != null && (Boolean.TRUE.equals(dto.getIsGroupVisible()) || "ALL".equalsIgnoreCase(dto.getScope()))) {
                     EventSyncMessageDTO syncMsg = new EventSyncMessageDTO();
                     syncMsg.setType("event_sync");
                     syncMsg.setGroupEventId(groupEventId);
@@ -392,6 +398,7 @@ public class EventService {
                     syncMsg.setUpdatedBy(userId);
 
                     myWebSocketHandler.broadcastEventSync(dto.getChatId(), userId, syncMsg).subscribe();
+                    triggerEventBannerAndNotification(dto.getChatId(), userId, groupEventId, dto.getEventTitle(), "scheduled", start);
                 }
             });
     }
@@ -410,7 +417,10 @@ public class EventService {
                     if (effectiveCreatorId != null && !effectiveCreatorId.isEmpty()) {
                         return userInfoRepo.findById(effectiveCreatorId)
                             .map(u -> {
-                                ev.setCreatorName(u.getUsername() != null ? u.getUsername() : u.getPublicName());
+                                String name = u.getPrivateName() != null && !u.getPrivateName().trim().isEmpty()
+                                    ? u.getPrivateName().trim()
+                                    : (u.getUsername() != null ? u.getUsername() : u.getPublicName());
+                                ev.setCreatorName(name);
                                 return ev;
                             })
                             .defaultIfEmpty(ev)

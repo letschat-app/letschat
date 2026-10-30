@@ -342,6 +342,10 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                 return Mono.error(new RuntimeException("ChatId is null"));
             }
 
+            if (data.gettimestamp() == null) {
+                data.settimestamp(LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
+            }
+
             String msgId = "Msg-" + UUID.randomUUID();
             String chatId = data.getchatid();
             String userId = this.userid.get(sessionId);
@@ -1392,29 +1396,49 @@ private void fireNotification(String receiverId, String chatId,
 
     public Mono<Void> broadcastBannerPin(String chatId, String msgId, String senderId, String othersContent, String youContent, String messageType, String eventId, java.time.LocalDateTime now) {
         return getUserIds(chatId, null)
-            .flatMap(targetUserId -> {
-                reactor.core.publisher.Sinks.Many<String> receiverSink = usersink.get(targetUserId);
-                SendingMessageDTO msg = new SendingMessageDTO();
-                msg.setmsgid(msgId);
-                msg.setchatid(chatId);
-                msg.settype(messageType);
-                msg.setcontent(senderId != null && senderId.equals(targetUserId) ? youContent : othersContent);
-                msg.setsendername("server");
-                msg.setsenderid(senderId);
-                msg.settimestamp(now);
-                msg.setspaceid(0);
-                msg.setrepliedto(eventId);
-                try {
-                    String sendJson = objectMapper.writeValueAsString(msg);
-                    if (receiverSink != null) {
-                        receiverSink.tryEmitNext(sendJson);
-                    }
-                } catch (Exception e) {
-                    System.err.println("broadcastBannerPin error: " + e.getMessage());
+            .collectList()
+            .flatMap(memberList -> {
+                java.util.Set<String> allMembers = new java.util.HashSet<>(memberList);
+                if (senderId != null && !senderId.isEmpty()) {
+                    allMembers.add(senderId);
                 }
-                return Mono.empty();
-            })
-            .then();
+                return Flux.fromIterable(allMembers)
+                    .flatMap(targetUserId -> {
+                        AtomicReference<String> status = new AtomicReference<>(targetUserId.equals(senderId) ? "read" : "pending");
+                        reactor.core.publisher.Sinks.Many<String> receiverSink = usersink.get(targetUserId);
+                        SendingMessageDTO msg = new SendingMessageDTO();
+                        msg.setmsgid(msgId);
+                        msg.setchatid(chatId);
+                        msg.settype(messageType);
+                        msg.setcontent(senderId != null && senderId.equals(targetUserId) ? youContent : othersContent);
+                        msg.setsendername("server");
+                        msg.setsenderid(senderId);
+                        msg.settimestamp(now);
+                        msg.setspaceid(0);
+                        msg.setrepliedto(eventId);
+                        try {
+                            String sendJson = objectMapper.writeValueAsString(msg);
+                            if (receiverSink != null) {
+                                receiverSink.tryEmitNext(sendJson);
+                                if (!targetUserId.equals(senderId)) {
+                                    status.set("delivered");
+                                    userstatus.computeIfAbsent(targetUserId, k -> new ConcurrentHashMap<>())
+                                        .putIfAbsent(chatId, "in-active");
+                                    if ("active".equals(userstatus.get(targetUserId).get(chatId))) {
+                                        status.set("read");
+                                    }
+                                }
+                            } else {
+                                System.out.println("User is offline for banner pin: " + targetUserId);
+                            }
+                        } catch (Exception e) {
+                            System.err.println("broadcastBannerPin error: " + e.getMessage());
+                        }
+                        return messageTrackHistoryRepo.insert(msgId, senderId, targetUserId, status.get(), now)
+                            .then(Mono.just("inserted"));
+                    })
+                    .then();
+            });
     }
 
     public Mono<Void> send(ScheduleMessage msg) {
