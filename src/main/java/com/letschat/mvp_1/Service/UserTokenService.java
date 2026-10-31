@@ -46,7 +46,7 @@ public class UserTokenService {
                                 }
                             });
                 })
-                .switchIfEmpty(Mono.defer(() -> fcmRepo.deleteToken(deviceId).then()))
+                .switchIfEmpty(Mono.defer(() -> fcmRepo.deleteToken(deviceId)))
                 .then();
     }
 
