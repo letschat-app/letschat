@@ -31,4 +31,13 @@ GROUP BY "uc"."UserId";
             ORDER BY "created" ASC
             """)
     Flux<AssignmentInfo> findByChatId(String chatId);
+
+    @Query("""
+        SELECT ai."assignment_id", ai."title", ai."deadline", uc."ChatName" as "chat_name"
+        FROM "AssignmentInfo" ai
+        JOIN "UserChat" uc ON uc."ChatId" = ai."chat_id" AND uc."UserId" = :userId
+        WHERE ai."assignment_id" IN (:assignmentIds)
+        ORDER BY ai."deadline" ASC
+    """)
+    Flux<com.letschat.mvp_1.DTOs.MissingAssignmentItemDTO> findMissingAssignmentDetails(java.util.List<Long> assignmentIds, String userId);
 }

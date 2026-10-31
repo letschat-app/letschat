@@ -2,12 +2,17 @@ package com.letschat.mvp_1;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
+import com.letschat.mvp_1.DTOs.MissingAssignmentItemDTO;
+import com.letschat.mvp_1.Models.EventInfo;
 import com.letschat.mvp_1.Repositories.AssignmentRepo;
 import com.letschat.mvp_1.Repositories.EventInfoRepo;
 import com.letschat.mvp_1.Repositories.FCMRepo;
 import com.letschat.mvp_1.Repositories.UserChatInfoRepo;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
@@ -24,6 +29,7 @@ import java.util.concurrent.*;
 @Component
 public class NotificationService {
 
+    private static final Logger logger = LoggerFactory.getLogger(NotificationService.class);
     private static final int MAX_MESSAGES = 5;
 
     // ================= CACHE =================
@@ -42,11 +48,11 @@ public class NotificationService {
     private final UserChatInfoRepo userChatInfoRepo;
     private final AssignmentRepo assignmentRepo;
 
-    public NotificationService(FCMRepo fcmRepo,EventInfoRepo eventInfoRepo,UserChatInfoRepo userChatInfoRepo,AssignmentRepo assignmentRepo) {
+    public NotificationService(FCMRepo fcmRepo, EventInfoRepo eventInfoRepo, UserChatInfoRepo userChatInfoRepo, AssignmentRepo assignmentRepo) {
         this.fcmRepo = fcmRepo;
-        this.eventInfoRepo=eventInfoRepo;
-        this.userChatInfoRepo=userChatInfoRepo;
-        this.assignmentRepo=assignmentRepo;
+        this.eventInfoRepo = eventInfoRepo;
+        this.userChatInfoRepo = userChatInfoRepo;
+        this.assignmentRepo = assignmentRepo;
     }
 
     // ================= CHAT STATE =================
@@ -54,6 +60,17 @@ public class NotificationService {
         public int unread;
         public long lastUpdated = System.currentTimeMillis();
         public List<String> messages = new ArrayList<>();
+        public long firstPendingAt = 0;
+        public String lastSenderId = "";
+        public String lastSenderName = "";
+        public String lastMsgType = "text";
+        public String lastMsgId = "";
+        public String lastSpaceId = "0";
+        public String lastPreview = "";
+        public long lastTs = 0;
+        public int batchCount = 0;
+        public List<Map<String, String>> items = new ArrayList<>();
+        public Set<String> announcedMsgIds = new HashSet<>();
     }
 
     private String chatKey(String userId, String chatId) {
@@ -101,18 +118,50 @@ public class NotificationService {
 
     // ================= CHAT LOGIC =================
     public ChatState addMessage(String userId, String chatId, String message) {
-        String k = chatKey(userId, chatId);
+        return addMessage(userId, chatId, message, "", "", "text", "", "0", "", System.currentTimeMillis(), false);
+    }
 
+    public ChatState addMessage(String userId, String chatId, String message,
+                                String senderId, String senderName, String msgType,
+                                String msgId, String spaceId, String preview,
+                                long ts, boolean alreadyAnnounced) {
+        String k = chatKey(userId, chatId);
         store.putIfAbsent(k, new ChatState());
         ChatState state = store.get(k);
 
         synchronized (state) {
             state.unread++;
             state.lastUpdated = System.currentTimeMillis();
+            if (state.firstPendingAt <= 0) {
+                state.firstPendingAt = System.currentTimeMillis();
+            }
             state.messages.add(message);
-
             if (state.messages.size() > MAX_MESSAGES) {
                 state.messages.remove(0);
+            }
+
+            if (alreadyAnnounced) {
+                if (msgId != null && !msgId.isEmpty()) {
+                    state.announcedMsgIds.add(msgId);
+                }
+            } else {
+                state.batchCount++;
+                state.lastSenderId = senderId != null ? senderId : "";
+                state.lastSenderName = senderName != null ? senderName : "";
+                state.lastMsgType = msgType != null ? msgType : "text";
+                state.lastMsgId = msgId != null ? msgId : "";
+                state.lastSpaceId = spaceId != null ? spaceId : "0";
+                state.lastPreview = preview != null ? preview : "";
+                state.lastTs = ts > 0 ? ts : System.currentTimeMillis();
+
+                Map<String, String> item = new LinkedHashMap<>();
+                item.put("s", state.lastSenderName);
+                item.put("t", state.lastMsgType);
+                item.put("x", state.lastPreview);
+                state.items.add(item);
+                if (state.items.size() > MAX_MESSAGES) {
+                    state.items.remove(0);
+                }
             }
             return state;
         }
@@ -151,6 +200,29 @@ public class NotificationService {
     }
 
     // ================= CHAT NOTIFY =================
+    public Mono<Void> notifyUser(
+            String userId, String chatId, String legacyTitle, String chatName,
+            String chatKind, String alertKind, String senderId, String senderName,
+            String msgType, String msgId, String spaceId, String preview,
+            long ts, boolean isMention, boolean isReplyToUser,
+            String legacyMsg, String repliedTo
+    ) {
+        return isChatMuted(userId, chatId)
+                .flatMap(isMuted -> {
+                    if (!PushPolicy.shouldNotify(Boolean.TRUE.equals(isMuted), isReplyToUser, isMention)) {
+                        return Mono.empty();
+                    }
+
+                    return Mono.fromRunnable(() -> {
+                        processChatV2(
+                                userId, chatId, legacyTitle, chatName, chatKind, alertKind,
+                                senderId, senderName, msgType, msgId, spaceId, preview,
+                                ts, isMention, isReplyToUser, legacyMsg, repliedTo
+                        );
+                    }).subscribeOn(Schedulers.boundedElastic()).then();
+                });
+    }
+
     public Mono<Void> notifyUser(String userId, String chatId,
                                  String title, String msg, String type) {
         return notifyUser(userId, chatId, title, msg, type, false, null);
@@ -159,85 +231,188 @@ public class NotificationService {
     public Mono<Void> notifyUser(String userId, String chatId,
                                  String title, String msg, String type,
                                  boolean isReplyToUser, String repliedTo) {
-
-        return isChatMuted(userId, chatId)
-                .flatMap(isMuted -> {
-                    if (Boolean.TRUE.equals(isMuted)) {
-                        if (!isReplyToUser) {
-                            // 🛑 STOPPED AT SERVER: Chat is globally muted for this user!
-                            return Mono.empty();
-                        }
-                        // ⚡ REPLY OVERRIDE: Muted, but direct reply to user!
-                        System.out.println("[CHAT NOTIFY] Reply override triggered for muted user " + userId + " in chat " + chatId);
-                    }
-
-                    return Mono.fromRunnable(() ->
-                            processChat(userId, chatId, title, msg, type, isReplyToUser, repliedTo)
-                    ).subscribeOn(Schedulers.boundedElastic()).then();
-                });
+        return notifyUser(
+                userId, chatId, title, title, "room".equalsIgnoreCase(type) ? "room" : "group",
+                isReplyToUser ? "reply" : "message", "", "", "text", "", "0", "",
+                System.currentTimeMillis(), false, isReplyToUser, msg, repliedTo
+        );
     }
 
-    // ================= DEBOUNCE =================
-    private void processChat(String userId, String chatId,
-                             String title, String msg, String type,
-                             boolean isReplyToUser, String repliedTo) {
-
+    // ================= DEBOUNCE (V2) =================
+    private void processChatV2(
+            String userId, String chatId, String legacyTitle, String chatName,
+            String chatKind, String alertKind, String senderId, String senderName,
+            String msgType, String msgId, String spaceId, String preview,
+            long ts, boolean isMention, boolean isReplyToUser,
+            String legacyMsg, String repliedTo
+    ) {
         String k = chatKey(userId, chatId);
-        ChatState state = addMessage(userId, chatId, msg);
 
-        ScheduledFuture<?> existing = timers.get(k);
-        if (existing != null) existing.cancel(false);
+        // IMMEDIATE PUSH FOR MENTION OR REPLY (in group or room chats)
+        if (("mention".equals(alertKind) || "reply".equals(alertKind)) && !"dm".equals(chatKind)) {
+            ChatState state = addMessage(
+                    userId, chatId, legacyMsg, senderId, senderName, msgType,
+                    msgId, spaceId, preview, ts, true
+            );
 
-        // 30 seconds for room, 5 seconds for normal chats
-        long debounceSeconds = "room".equalsIgnoreCase(type) ? 30L : 5L;
+            Map<String, String> item = new LinkedHashMap<>();
+            item.put("s", senderName != null ? senderName : "");
+            item.put("t", msgType != null ? msgType : "text");
+            item.put("x", preview != null ? preview : "");
 
-        ScheduledFuture<?> future = scheduler.schedule(() -> {
-
-            int unreadToSend;
-            List<String> msgsToSend;
+            int currentUnread;
             synchronized (state) {
-                unreadToSend = state.unread;
-                msgsToSend = new ArrayList<>(state.messages);
+                currentUnread = state.unread;
             }
+
+            Map<String, String> data = PushPayloadBuilder.buildChatData(
+                    chatId,
+                    legacyTitle,
+                    chatName,
+                    chatKind,
+                    alertKind,
+                    senderId,
+                    senderName,
+                    msgType,
+                    msgId,
+                    spaceId,
+                    preview,
+                    Collections.singletonList(item),
+                    1,
+                    currentUnread,
+                    ts,
+                    isMention,
+                    isReplyToUser,
+                    Collections.singletonList(legacyMsg),
+                    chatKind,
+                    repliedTo
+            );
 
             getTokens(userId)
                     .collectList()
                     .subscribe(tokens -> {
                         if (tokens != null && !tokens.isEmpty()) {
                             for (String token : tokens) {
-                                sendChat(token, chatId, title, unreadToSend, msgsToSend, userId, type, repliedTo);
+                                Message message = PushPayloadBuilder.buildChatMessage(data, token);
+                                safeSend(userId, token, message, "CHAT_" + alertKind.toUpperCase());
                             }
                         }
                     });
+            return;
+        }
 
-            timers.remove(k);
+        // NORMAL MERGED DEBOUNCED PUSH
+        ChatState state = addMessage(
+                userId, chatId, legacyMsg, senderId, senderName, msgType,
+                msgId, spaceId, preview, ts, false
+        );
 
-        }, debounceSeconds, TimeUnit.SECONDS);
+        long now = System.currentTimeMillis();
+        long debounceDelayMs = "room".equalsIgnoreCase(chatKind) ? 30000L : 5000L;
+        long maxWaitMs = "room".equalsIgnoreCase(chatKind) ? 60000L : 15000L;
+
+        long delayMs;
+        synchronized (state) {
+            delayMs = PushPolicy.calculateDebounceDelayMs(now, state.firstPendingAt, debounceDelayMs, maxWaitMs);
+        }
+
+        ScheduledFuture<?> existing = timers.get(k);
+        if (existing != null) existing.cancel(false);
+
+        ScheduledFuture<?> future = scheduler.schedule(() -> {
+            Mono.fromRunnable(() -> {
+                int unreadToSend;
+                int batchCountToSend;
+                List<Map<String, String>> itemsToSend;
+                List<String> legacyMsgsToSend;
+                String finalSenderId;
+                String finalSenderName;
+                String finalMsgType;
+                String finalMsgId;
+                String finalSpaceId;
+                String finalPreview;
+                long finalTs;
+
+                synchronized (state) {
+                    if (state.batchCount == 0) {
+                        state.firstPendingAt = 0;
+                        timers.remove(k);
+                        return;
+                    }
+
+                    unreadToSend = state.unread;
+                    batchCountToSend = state.batchCount;
+                    itemsToSend = new ArrayList<>(state.items);
+                    legacyMsgsToSend = new ArrayList<>(state.messages);
+                    finalSenderId = state.lastSenderId;
+                    finalSenderName = state.lastSenderName;
+                    finalMsgType = state.lastMsgType;
+                    finalMsgId = state.lastMsgId;
+                    finalSpaceId = state.lastSpaceId;
+                    finalPreview = state.lastPreview;
+                    finalTs = state.lastTs;
+
+                    // Reset batch counters
+                    state.batchCount = 0;
+                    state.items.clear();
+                    state.firstPendingAt = 0;
+                }
+
+                Map<String, String> data = PushPayloadBuilder.buildChatData(
+                        chatId,
+                        legacyTitle,
+                        chatName,
+                        chatKind,
+                        "message",
+                        finalSenderId,
+                        finalSenderName,
+                        finalMsgType,
+                        finalMsgId,
+                        finalSpaceId,
+                        finalPreview,
+                        itemsToSend,
+                        batchCountToSend,
+                        unreadToSend,
+                        finalTs,
+                        false,
+                        false,
+                        legacyMsgsToSend,
+                        chatKind,
+                        repliedTo
+                );
+
+                getTokens(userId)
+                        .collectList()
+                        .subscribe(tokens -> {
+                            if (tokens != null && !tokens.isEmpty()) {
+                                for (String token : tokens) {
+                                    Message message = PushPayloadBuilder.buildChatMessage(data, token);
+                                    safeSend(userId, token, message, "CHAT");
+                                }
+                            }
+                        });
+
+                timers.remove(k);
+            }).subscribeOn(Schedulers.boundedElastic()).subscribe();
+        }, delayMs, TimeUnit.MILLISECONDS);
 
         timers.put(k, future);
     }
 
     // ================= DEDUP HELPER =================
-    // ✅ TTL-based — checks timestamp not just presence
     private boolean dedupCheck(String key, long ttlMs) {
         long now = System.currentTimeMillis();
         Long last = eventDedup.get(key);
-
         if (last != null && (now - last) < ttlMs) return false;
-
         eventDedup.put(key, now);
         return true;
     }
 
     // ================= EVENT REMINDER =================
-    // ✅ runs every 10 minutes
-    // ✅ evaluates dynamic reminder_offset (60 min default, 120 min, 1 day, custom 15 min)
-    // ✅ filters out cancelled events and disabled reminders
     @Scheduled(fixedRate = 10 * 60 * 1000)
     public void checkUpcomingEvents() {
-
         Instant now = Instant.now();
-        Instant maxFuture = now.plus(25, ChronoUnit.HOURS); // covers up to 1-day reminders (24h)
+        Instant maxFuture = now.plus(25, ChronoUnit.HOURS);
 
         eventInfoRepo.findEventsForReminderEvaluation(now, maxFuture)
                 .filter(event -> {
@@ -247,16 +422,14 @@ public class NotificationService {
 
                     int offsetMins = event.getReminderOffset() != null ? event.getReminderOffset() : 60;
                     Instant reminderTargetTime = event.getStartTime().minus(offsetMins, ChronoUnit.MINUTES);
-
-                    // Check if current scheduler run is within 10 minutes of the target reminder time
                     long diffSeconds = ChronoUnit.SECONDS.between(now, reminderTargetTime);
                     return diffSeconds >= -600 && diffSeconds <= 600;
                 })
                 .flatMap(event -> {
                     int offset = event.getReminderOffset() != null ? event.getReminderOffset() : 60;
+                    // 24-hour in-memory dedup key as requested
                     String k = eventKey(event.getUserId(), event.getEventId(), offset + "M");
-
-                    if (!dedupCheck(k, 15 * 60 * 1000L)) return Mono.empty();
+                    if (!dedupCheck(k, 24 * 60 * 60 * 1000L)) return Mono.empty();
 
                     String startTimeStr = event.getStartTime() != null ? event.getStartTime().toString() : "";
                     String eventIdStr = String.valueOf(event.getEventId());
@@ -264,45 +437,41 @@ public class NotificationService {
                     String eventChatId = event.getChatId() != null ? event.getChatId() : "";
 
                     Mono<String> chatNameMono = (eventChatId != null && !eventChatId.isEmpty() && !"0".equals(eventChatId))
-                            ? userChatInfoRepo.findChatNameByChatId(eventChatId).defaultIfEmpty("LetsChat Event")
+                            ? userChatInfoRepo.findChatNameByChatIdAndUserId(eventChatId, event.getUserId()).defaultIfEmpty("LetsChat Event")
                             : Mono.just("LetsChat Event");
 
-                    return chatNameMono.flatMap(chatName ->
-                            getTokens(event.getUserId())
-                                    .flatMap(token ->
-                                            Mono.fromRunnable(() ->
-                                                    sendEvent(
-                                                            token,
-                                                            eventIdStr,
-                                                            eventTitle,
-                                                            eventChatId,
-                                                            event.getUserId(),
-                                                            startTimeStr,
-                                                            chatName,
-                                                            event.getMeetingType(),
-                                                            event.getMeetingLink(),
-                                                            event.getLocation()
-                                                    )
-                                            ).subscribeOn(Schedulers.boundedElastic())
-                                    )
-                                    .then()
-                    );
+                    return chatNameMono.flatMap(chatName -> {
+                        Map<String, String> data = PushPayloadBuilder.buildEventReminderData(
+                                eventIdStr,
+                                eventTitle,
+                                eventChatId,
+                                chatName,
+                                startTimeStr,
+                                offset,
+                                event.getLocation(),
+                                event.getMeetingType(),
+                                event.getMeetingLink(),
+                                eventTitle
+                        );
+
+                        return getTokens(event.getUserId())
+                                .flatMap(token ->
+                                        Mono.fromRunnable(() -> {
+                                            Message message = PushPayloadBuilder.buildEventReminderMessage(data, token);
+                                            safeSend(event.getUserId(), token, message, "EVENT_REMINDER");
+                                        }).subscribeOn(Schedulers.boundedElastic())
+                                )
+                                .then();
+                    });
                 })
-                .doOnError(e -> System.out.println("[EVENT REMINDER] error: " + e))
+                .doOnError(e -> logger.error("[EVENT REMINDER] Error: {}", e.getMessage()))
                 .onErrorResume(e -> Flux.empty())
-                .subscribe(
-                        null,
-                        e -> System.out.println("[EVENT REMINDER] fatal: " + e),
-                        () -> System.out.println("[EVENT REMINDER] done")
-                );
+                .subscribe();
     }
 
-    // ================= DAILY 7AM IST =================
-    // ✅ groupBy instead of collectMultimap — no full table in memory
-    // ✅ runs at 7:00 AM Indian Standard Time (Asia/Kolkata)
+    // ================= DAILY SUMMARY 7AM IST =================
     @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Kolkata")
     public void dailySummary() {
-
         ZoneId istZone = ZoneId.of("Asia/Kolkata");
         LocalDate today = LocalDate.now(istZone);
         Instant start = today.atStartOfDay(istZone).toInstant();
@@ -311,282 +480,209 @@ public class NotificationService {
         eventInfoRepo.findTodayEvents(start, end)
                 .groupBy(e -> e.getUserId())
                 .flatMap(group -> group
-                        .map(e -> e.getEventId())
                         .collectList()
-                        .flatMap(titles -> {
+                        .flatMap(eventList -> {
                             String userId = group.key();
-                            String k = userId + ":daily:" + today;
+                            if (eventList == null || eventList.isEmpty()) {
+                                return Mono.empty();
+                            }
 
+                            String k = userId + ":daily:" + today;
                             if (!dedupCheck(k, 24 * 60 * 60 * 1000L))
                                 return Mono.empty();
 
+                            // De-duplicate by groupEventId when present
+                            Map<String, EventInfo> uniqueMap = new LinkedHashMap<>();
+                            for (EventInfo ev : eventList) {
+                                String key = (ev.getGroupEventId() != null && !ev.getGroupEventId().isEmpty())
+                                        ? ev.getGroupEventId()
+                                        : String.valueOf(ev.getEventId());
+                                uniqueMap.putIfAbsent(key, ev);
+                            }
+
+                            List<EventInfo> sortedEvents = new ArrayList<>(uniqueMap.values());
+                            sortedEvents.sort((a, b) -> {
+                                if (a.getStartTime() == null) return -1;
+                                if (b.getStartTime() == null) return 1;
+                                return a.getStartTime().compareTo(b.getStartTime());
+                            });
+
+                            List<Long> legacyIds = new ArrayList<>();
+                            List<Map<String, String>> eventsV2List = new ArrayList<>();
+
+                            for (EventInfo ev : sortedEvents) {
+                                legacyIds.add(ev.getEventId());
+                                if (eventsV2List.size() < 5) {
+                                    Map<String, String> item = new LinkedHashMap<>();
+                                    item.put("id", String.valueOf(ev.getEventId()));
+                                    String title = ev.getEventTitle() != null ? ev.getEventTitle() : "Event";
+                                    if (title.length() > 40) title = title.substring(0, 39) + "…";
+                                    item.put("title", title);
+                                    item.put("startTime", ev.getStartTime() != null ? ev.getStartTime().toString() : "");
+                                    item.put("location", ev.getLocation() != null ? ev.getLocation() : "");
+                                    eventsV2List.add(item);
+                                }
+                            }
+
+                            Map<String, String> data = PushPayloadBuilder.buildDailySummaryData(
+                                    sortedEvents.size(),
+                                    eventsV2List,
+                                    legacyIds,
+                                    today.toString()
+                            );
+
                             return getTokens(userId)
                                     .flatMap(token ->
-                                            Mono.fromRunnable(() ->
-                                                    sendDaily(token, titles, userId)
-                                            ).subscribeOn(Schedulers.boundedElastic())
+                                            Mono.fromRunnable(() -> {
+                                                Message message = PushPayloadBuilder.buildDailySummaryMessage(data, token);
+                                                safeSend(userId, token, message, "DAILY");
+                                            }).subscribeOn(Schedulers.boundedElastic())
                                     )
                                     .then();
                         })
                 )
-                .doOnError(e -> System.out.println("[DAILY SUMMARY] error: " + e))
+                .doOnError(e -> logger.error("[DAILY SUMMARY] Error: {}", e.getMessage()))
                 .onErrorResume(e -> Flux.empty())
-                .subscribe(
-                        null,
-                        e -> System.out.println("[DAILY SUMMARY] fatal: " + e),
-                        () -> System.out.println("[DAILY SUMMARY] done")
-                );
+                .subscribe();
     }
 
     // ================= ASSIGNMENT MISSING 7AM IST =================
-    // ✅ runs at 7:00 AM Indian Standard Time (Asia/Kolkata)
     @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Kolkata")
     public void assignmentMissingSummary() {
-
         ZoneId istZone = ZoneId.of("Asia/Kolkata");
         LocalDate today = LocalDate.now(istZone);
 
         assignmentRepo.findMissingAssignments()
                 .flatMap(dto -> {
-
                     if (dto.getAssignmentIds() == null || dto.getAssignmentIds().isEmpty()) {
                         return Mono.empty();
                     }
 
                     String k = dto.getUserId() + ":assignment:" + today;
-
                     if (!dedupCheck(k, 24 * 60 * 60 * 1000L)) {
                         return Mono.empty();
                     }
 
-                    return getTokens(dto.getUserId())
-                            .flatMap(token ->
-                                    Mono.fromRunnable(() ->
-                                            sendAssignmentNotification(
-                                                    token,
-                                                    dto.getUserId(),
-                                                    dto.getAssignmentIds()
-                                            )
-                                    ).subscribeOn(Schedulers.boundedElastic())
-                            )
-                            .then();
+                    List<Long> ids = dto.getAssignmentIds();
+
+                    return assignmentRepo.findMissingAssignmentDetails(ids, dto.getUserId())
+                            .collectList()
+                            .flatMap(details -> {
+                                List<Map<String, String>> assignmentsV2List = new ArrayList<>();
+                                for (MissingAssignmentItemDTO item : details) {
+                                    if (assignmentsV2List.size() < 5) {
+                                        Map<String, String> map = new LinkedHashMap<>();
+                                        map.put("id", String.valueOf(item.getAssignmentId()));
+                                        String title = item.getTitle() != null ? item.getTitle() : "Assignment";
+                                        if (title.length() > 40) title = title.substring(0, 39) + "…";
+                                        map.put("title", title);
+                                        map.put("deadline", item.getDeadline() != null ? item.getDeadline().toString() : "");
+                                        map.put("chatName", item.getChatName() != null ? item.getChatName() : "");
+                                        assignmentsV2List.add(map);
+                                    }
+                                }
+
+                                Map<String, String> data = PushPayloadBuilder.buildMissingAssignmentData(
+                                        dto.getUserId(),
+                                        ids.size(),
+                                        assignmentsV2List,
+                                        ids
+                                );
+
+                                return getTokens(dto.getUserId())
+                                        .flatMap(token ->
+                                                Mono.fromRunnable(() -> {
+                                                    Message message = PushPayloadBuilder.buildMissingAssignmentMessage(data, token);
+                                                    safeSend(dto.getUserId(), token, message, "ASSIGNMENT_MISSING");
+                                                }).subscribeOn(Schedulers.boundedElastic())
+                                        )
+                                        .then();
+                            });
                 })
-                .doOnError(e -> System.out.println("[ASSIGNMENT SUMMARY] error: " + e))
+                .doOnError(e -> logger.error("[ASSIGNMENT SUMMARY] Error: {}", e.getMessage()))
                 .onErrorResume(e -> Flux.empty())
                 .subscribe();
     }
 
-    // ================= TOKEN SYNC (every 7 days at midnight) =================
-    @Scheduled(cron = "0 0 0 */7 * *", zone = "Asia/Kolkata")
-    public void syncTokens() {
-
-        fcmRepo.getAllUsersWithTokens()
-                .collectList()
-                .doOnNext(list -> {
-
-                    Map<String, Set<String>> newCache = new ConcurrentHashMap<>();
-
-                    for (var row : list) {
-                        newCache
-                                .computeIfAbsent(row.getUserId(), k -> ConcurrentHashMap.newKeySet())
-                                .add(row.getFcmToken());
-                    }
-
-                    tokenCache.clear();
-                    tokenCache.putAll(newCache);
-
-                    System.out.println("[TOKEN SYNC] users=" + newCache.size());
-                })
-                .doOnError(e -> System.out.println("[TOKEN SYNC] error: " + e))
-                .onErrorResume(e -> Mono.empty())
-                .subscribe(
-                        null,
-                        e -> System.out.println("[TOKEN SYNC] fatal: " + e),
-                        () -> System.out.println("[TOKEN SYNC] done")
-                );
-    }
-
-    // ================= DEDUP CLEANUP (every 2 hours) =================
-    // ✅ TTL eviction — removes only expired keys, not blanket clear
-    @Scheduled(fixedRate = 2 * 60 * 60 * 1000)
-    public void cleanEventDedup() {
-        long now = System.currentTimeMillis();
-        long ttl = 25 * 60 * 60 * 1000L;
-
-        int before = eventDedup.size();
-        eventDedup.entrySet().removeIf(entry -> (now - entry.getValue()) > ttl);
-
-        int removed = before - eventDedup.size();
-        if (removed > 0) {
-            System.out.println("[DEDUP CLEANUP] removed=" + removed
-                    + " remaining=" + eventDedup.size());
-        }
-    }
-
-    // ================= STALE CHAT CLEANUP (every 30 mins) =================
-    // ✅ evicts store entries idle for over 1 hour — prevents memory leak
-    @Scheduled(fixedRate = 30 * 60 * 1000)
-    public void cleanStaleChats() {
-        long now = System.currentTimeMillis();
-        long ttl = 60 * 60 * 1000L;
-
-        int before = store.size();
-
-        store.entrySet().removeIf(entry -> {
-            synchronized (entry.getValue()) {
-                return (now - entry.getValue().lastUpdated) > ttl;
-            }
-        });
-
-        int removed = before - store.size();
-        if (removed > 0) {
-            System.out.println("[CHAT CLEANUP] removed=" + removed + " stale entries");
-        }
-    }
-
-    // ================= FIREBASE SENDS =================
-    private void sendChat(String token, String chatId, String title,
-                          int unread, List<String> msgs, String userId,
-                          String chatType, String repliedTo) {
-        try {
-            Map<String, String> data = new HashMap<>();
-            data.put("type", "CHAT");
-            data.put("chatId", chatId);
-            data.put("title", title);
-            data.put("unread", "room".equalsIgnoreCase(chatType) ? "1" : String.valueOf(unread));
-            data.put("msgs", objectMapper.writeValueAsString(msgs));
-            if (chatType != null) data.put("chatType", chatType);
-            if (repliedTo != null && !repliedTo.isEmpty()) data.put("repliedTo", repliedTo);
-
-            FirebaseMessaging.getInstance()
-                    .send(Message.builder().putAllData(data).setToken(token).build());
-
-            System.out.println("[CHAT] sent to " + userId + " (type=" + chatType + ")");
-
-        } catch (Exception e) {
-            System.out.println("[CHAT] error: " + e);
-        }
-    }
-
-    private void sendEvent(String token, String eventId, String title,
-                           String chatId, String userId, String startTime, String chatName) {
-        sendEvent(token, eventId, title, chatId, userId, startTime, chatName, null, null, null);
-    }
-
-    private void sendEvent(String token, String eventId, String title,
-                           String chatId, String userId, String startTime, String chatName,
-                           String meetingType, String meetingLink, String location) {
-        try {
-            Map<String, String> data = new HashMap<>();
-            data.put("type", "EVENT");
-            data.put("eventId", eventId != null ? eventId : "");
-            data.put("title", title != null ? title : "Upcoming Event");
-            data.put("chatId", chatId != null ? chatId : "");
-            data.put("chatName", chatName != null ? chatName : "LetsChat Event");
-            data.put("startTime", startTime != null ? startTime : "");
-            data.put("meetingType", meetingType != null ? meetingType : "");
-            data.put("meetingLink", meetingLink != null ? meetingLink : "");
-            data.put("location", location != null ? location : "");
-
-            FirebaseMessaging.getInstance()
-                    .send(Message.builder().putAllData(data).setToken(token).build());
-
-            System.out.println("[EVENT] sent to " + userId + " for " + chatName);
-
-        } catch (Exception e) {
-            System.out.println("[EVENT] error: " + e);
-        }
-    }
-
-    private void sendDaily(String token, List<Long> events, String userId) {
-        try {
-            Map<String, String> data = new HashMap<>();
-            data.put("type", "DAILY");
-            data.put("events", objectMapper.writeValueAsString(events));
-            data.put("date", LocalDate.now().toString());
-
-            FirebaseMessaging.getInstance()
-                    .send(Message.builder().putAllData(data).setToken(token).build());
-
-            System.out.println("[DAILY] sent to " + userId);
-
-        } catch (Exception e) {
-            System.out.println("[DAILY] error: " + e);
-        }
-    }
-
-    private void sendAssignmentNotification(String token,
-                                        String userId,
-                                        List<Long> assignmentIds) {
-        try {
-            Map<String, String> data = new HashMap<>();
-            data.put("type", "ASSIGNMENT_MISSING");
-            data.put("userId", userId);
-            data.put("assignments", objectMapper.writeValueAsString(assignmentIds));
-
-            FirebaseMessaging.getInstance()
-                .send(Message.builder()
-                        .putAllData(data)
-                        .setToken(token)
-                        .build());
-
-            System.out.println("[ASSIGNMENT] sent to " + userId);
-
-        } catch (Exception e) {
-            System.out.println("[ASSIGNMENT] error: " + e.getMessage());
-        }
-    }
-
+    // ================= EVENT CHANGED PUSH =================
     public void sendEventChange(String userId, String eventId, String title, String changeSummary, String startTime) {
-        if (userId == null || userId.isEmpty()) return;
-        getTokens(userId)
-                .flatMap(token ->
-                        Mono.fromRunnable(() -> {
-                            try {
-                                Map<String, String> data = new HashMap<>();
-                                data.put("type", "EVENT_CHANGED");
-                                data.put("eventId", eventId != null ? eventId : "");
-                                data.put("title", title != null ? ("Event Updated: " + title) : "Event Details Changed");
-                                data.put("changeSummary", changeSummary != null ? changeSummary : "Event details have been updated.");
-                                data.put("startTime", startTime != null ? startTime : "");
-
-                                FirebaseMessaging.getInstance()
-                                        .send(Message.builder().putAllData(data).setToken(token).build());
-
-                                System.out.println("[EVENT_CHANGED] sent to " + userId + " for event " + eventId);
-                            } catch (Exception e) {
-                                System.out.println("[EVENT_CHANGED] error: " + e);
-                            }
-                        }).subscribeOn(Schedulers.boundedElastic())
-                )
-                .subscribe(null, e -> System.out.println("[EVENT_CHANGED] subscription error: " + e));
+        sendGroupEventNotification(userId, "", "", eventId, title, changeSummary, startTime);
     }
 
     public void sendGroupEventNotification(String userId, String chatId, String groupName, String eventId, String title, String summary, String startTime) {
+        sendGroupEventNotification(userId, chatId, groupName, eventId, title, summary, startTime, "updated", Collections.emptyList(), startTime, "", "");
+    }
+
+    public void sendGroupEventNotification(
+            String userId, String chatId, String groupName, String eventId,
+            String title, String summary, String startTime, String action,
+            List<Map<String, String>> changesList, String effectiveStartTime,
+            String location, String personName
+    ) {
         if (userId == null || userId.isEmpty()) return;
+        Map<String, String> data = PushPayloadBuilder.buildEventChangedData(
+                action != null ? action : "updated",
+                eventId,
+                title,
+                chatId,
+                groupName,
+                effectiveStartTime != null ? effectiveStartTime : startTime,
+                changesList,
+                personName != null ? personName : "",
+                location != null ? location : "",
+                groupName != null ? groupName : "Event Update",
+                summary != null ? summary : "Event details updated."
+        );
+
         getTokens(userId)
                 .flatMap(token ->
                         Mono.fromRunnable(() -> {
-                            try {
-                                Map<String, String> data = new HashMap<>();
-                                data.put("type", "EVENT_CHANGED");
-                                data.put("eventId", eventId != null ? eventId : "");
-                                data.put("chatId", chatId != null ? chatId : "");
-                                data.put("chatName", groupName != null ? groupName : "Group Event");
-                                data.put("title", groupName != null ? groupName : "Event Update");
-                                data.put("changeSummary", summary != null ? summary : ("Event: " + title));
-                                data.put("startTime", startTime != null ? startTime : "");
-
-                                com.google.firebase.messaging.FirebaseMessaging.getInstance()
-                                        .send(com.google.firebase.messaging.Message.builder().putAllData(data).setToken(token).build());
-
-                                System.out.println("[EVENT_NOTIF] sent to " + userId + " for " + title + " in " + groupName);
-                            } catch (Exception e) {
-                                System.out.println("[EVENT_NOTIF] error: " + e);
-                            }
-                        }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                            Message message = PushPayloadBuilder.buildEventChangedMessage(data, token);
+                            safeSend(userId, token, message, "EVENT_CHANGED");
+                        }).subscribeOn(Schedulers.boundedElastic())
                 )
-                .subscribe(null, e -> System.out.println("[EVENT_NOTIF] subscription error: " + e));
+                .subscribe(null, e -> logger.error("[EVENT_NOTIF] Subscription error for user {}: {}", userId, e.getMessage()));
     }
 
+    // ================= SAFE SEND WITH UNIFIED TOKEN CLEANUP =================
+    private void safeSend(String userId, String token, Message message, String typeForLog) {
+        safeSendWithRetry(userId, token, message, typeForLog, true);
+    }
+
+    private void safeSendWithRetry(String userId, String token, Message message, String typeForLog, boolean allowRetry) {
+        try {
+            FirebaseMessaging.getInstance().send(message);
+            logger.info("[PUSH] Sent {} to user {}", typeForLog, userId);
+        } catch (FirebaseMessagingException e) {
+            String errorCode = e.getMessagingErrorCode() != null ? e.getMessagingErrorCode().name() : "";
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+
+            if ("UNREGISTERED".equalsIgnoreCase(errorCode)) {
+                logger.warn("[PUSH] Unregistered token for user {}. Deleting token.", userId);
+                fcmRepo.deleteByToken(token)
+                        .doOnError(err -> logger.error("[PUSH] Error deleting unregistered token", err))
+                        .subscribe();
+                removeToken(userId, token);
+            } else if ("INVALID_ARGUMENT".equalsIgnoreCase(errorCode)) {
+                if (msg.contains("registration-token") || msg.contains("registration token") || msg.contains("token")) {
+                    logger.warn("[PUSH] Invalid registration token for user {}. Deleting token.", userId);
+                    fcmRepo.deleteByToken(token)
+                            .doOnError(err -> logger.error("[PUSH] Error deleting invalid token", err))
+                            .subscribe();
+                    removeToken(userId, token);
+                } else {
+                    logger.error("[PUSH] INVALID_ARGUMENT payload error for user {}: {}", userId, e.getMessage());
+                }
+            } else if (allowRetry && ("UNAVAILABLE".equalsIgnoreCase(errorCode) || "INTERNAL".equalsIgnoreCase(errorCode))) {
+                logger.warn("[PUSH] {} error for user {}. Retrying in 1s...", errorCode, userId);
+                scheduler.schedule(() -> {
+                    safeSendWithRetry(userId, token, message, typeForLog, false);
+                }, 1, TimeUnit.SECONDS);
+            } else {
+                logger.error("[PUSH] Failed sending {} to user {}: error code {}", typeForLog, userId, errorCode);
+            }
+        } catch (Exception e) {
+            logger.error("[PUSH] Unexpected error sending {} to user {}: {}", typeForLog, userId, e.getMessage());
+        }
+    }
 }

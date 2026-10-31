@@ -62,6 +62,11 @@ As chat_min_ids on user_chats."ChatId"=chat_min_ids."ChatId" join "ClassRoomInfo
             Mono<String>findChatNameByChatId(String chatid);
 
         @Query("""
+            select "ChatName" from "UserChat" where "ChatId"=:chatid and "UserId"=:userId limit 1
+            """)
+            Mono<String> findChatNameByChatIdAndUserId(String chatid, String userId);
+
+        @Query("""
                         select "ChatId" from "UserChat" where "UserId" IN (:U1,:U2) and "Type"='private'
 group by "ChatId" having count(distinct "UserId")=2
                         """)

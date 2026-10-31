@@ -613,9 +613,11 @@ private Mono<MessageResult> sendMessage(
         fireNotification(
             receiverId,
             chatId,
+            userId,
             username,
             data,
-            type
+            type,
+            msgId
         );
     }
 
@@ -718,7 +720,7 @@ private Mono<MessageResult> sendMessageWithPoll(
     );
 
     if (!isReceiverActive) {
-        fireNotification(receiverId, chatId, username, tempDTO, type);
+        fireNotification(receiverId, chatId, userId, username, tempDTO, type, msg.getmsgid());
     }
 
     if (receiverSink != null) {
@@ -792,11 +794,42 @@ private Mono<Void> sendAckAsync(Sinks.Many<String> senderSink, String chatId,
     return sendToSinkAsync(senderSink, ack);
 }
 
-private void fireNotification(String receiverId, String chatId,
-                               String username, ReceivingMessageDTO data, String type) {
-    String payload = data.getspaceid() + "/%20/" + data.gettype()
-                   + "/%20/" + username + "/%20/" + data.getcontent();
+private String deriveChatKind(String chatId, String type) {
+    if ((type != null && "room".equalsIgnoreCase(type)) || (chatId != null && chatId.startsWith("room_"))) {
+        return "room";
+    }
+    if (type != null && "private".equalsIgnoreCase(type)) {
+        return "dm";
+    }
+    if (type != null && ("group".equalsIgnoreCase(type) || "classroom".equalsIgnoreCase(type))) {
+        java.util.concurrent.CopyOnWriteArrayList<String> members = userchats.get(chatId);
+        if (members != null && members.size() == 2) {
+            return "dm";
+        }
+        return "group";
+    }
+    return "group";
+}
+
+private void fireNotification(String receiverId, String chatId, String senderId,
+                               String username, ReceivingMessageDTO data, String type, String msgId) {
+    if (data == null || "indicator".equalsIgnoreCase(data.gettype())) {
+        return;
+    }
+
+    String effectiveMsgId = (msgId != null && !msgId.trim().isEmpty())
+            ? msgId.trim()
+            : chatId + "-" + System.currentTimeMillis();
+
+    String content = data.getcontent() != null ? data.getcontent() : "";
+    String msgType = (data.gettype() != null && !data.gettype().trim().isEmpty()) ? data.gettype() : "text";
+    String spaceId = data.getspaceid() != null ? String.valueOf(data.getspaceid()) : "0";
     String repliedTo = data.getrepliedto();
+
+    String payload = spaceId + "/%20/" + msgType + "/%20/" + username + "/%20/" + content;
+    String chatKind = deriveChatKind(chatId, type);
+
+    boolean isMention = content.contains("<@" + receiverId + ":") || content.contains("<@" + receiverId + ">");
 
     Mono<Boolean> isReplyToUserMono;
     if (repliedTo != null && !repliedTo.trim().isEmpty()) {
@@ -818,19 +851,42 @@ private void fireNotification(String receiverId, String chatId,
         isReplyToUserMono = Mono.just(false);
     }
 
-    userChatInfoRepo.findChatNameByChatId(chatId)
+    userChatInfoRepo.findChatNameByChatIdAndUserId(chatId, receiverId)
+        .switchIfEmpty(userChatInfoRepo.findChatNameByChatId(chatId))
         .defaultIfEmpty(username)
         .flatMap(chatName ->
             isReplyToUserMono.flatMap(isReply -> {
-                String title;
-                if (isReply) {
-                    title = "You got a reply in " + chatName;
-                } else if ("room".equalsIgnoreCase(type)) {
-                    title = "New messages in " + chatName;
+                String alertKind = isMention ? "mention" : (isReply ? "reply" : "message");
+                String legacyTitle;
+                if ("mention".equals(alertKind)) {
+                    legacyTitle = "dm".equals(chatKind) ? username : username + " mentioned you in " + chatName;
+                } else if ("reply".equals(alertKind)) {
+                    legacyTitle = "dm".equals(chatKind) ? username : username + " replied to you in " + chatName;
+                } else if ("room".equals(chatKind)) {
+                    legacyTitle = "New messages in " + chatName;
                 } else {
-                    title = chatName != null ? chatName : username;
+                    legacyTitle = "dm".equals(chatKind) ? username : chatName;
                 }
-                return notificationService.notifyUser(receiverId, chatId, title, payload, type, isReply, repliedTo);
+
+                return notificationService.notifyUser(
+                        receiverId,
+                        chatId,
+                        legacyTitle,
+                        chatName,
+                        chatKind,
+                        alertKind,
+                        senderId,
+                        username,
+                        msgType,
+                        effectiveMsgId,
+                        spaceId,
+                        content,
+                        System.currentTimeMillis(),
+                        isMention,
+                        isReply,
+                        payload,
+                        repliedTo
+                );
             })
         )
         .subscribeOn(Schedulers.boundedElastic())
@@ -1490,8 +1546,12 @@ private void fireNotification(String receiverId, String chatId,
             );
 
             if (!uid.equals(msg.getSenderId()) && !isReceiverActive) {
-                String payload = msg.getSpaceId() + "/%20/" + msg.getMessageType() + "/%20/" + username + "/%20/" + msg.getMessage();
-                notificationService.notifyUser(uid, msg.getChatId(), username, payload, null).subscribe();
+                ReceivingMessageDTO schedData = new ReceivingMessageDTO();
+                schedData.setcontent(msg.getMessage());
+                schedData.settype(msg.getMessageType());
+                schedData.setspaceid(msg.getSpaceId());
+                schedData.settimestamp(msg.getTime());
+                fireNotification(uid, msg.getChatId(), msg.getSenderId(), username, schedData, "group", msgId);
             }                                
          
             if (receiverSink != null) {

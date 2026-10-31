@@ -34,13 +34,19 @@ public class UserTokenService {
     // DELETE TOKEN
     // =========================
     public Mono<Void> removeToken(String deviceId) {
-        return fcmRepo.deleteToken(deviceId)
-                .doOnNext(deleted -> {
-                    if (deleted != null && deleted.getUserId() != null) {
-                        notificationService.removeToken(deleted.getUserId(), deleted.getFcmToken());
-                        notificationService.invalidateTokenCache(deleted.getUserId());
-                    }
+        return fcmRepo.findByDeviceId(deviceId)
+                .flatMap(tokenModel -> {
+                    String uid = tokenModel.getUserId();
+                    String tok = tokenModel.getFcmToken();
+                    return fcmRepo.deleteToken(deviceId)
+                            .doOnSuccess(ignored -> {
+                                if (uid != null) {
+                                    notificationService.removeToken(uid, tok);
+                                    notificationService.invalidateTokenCache(uid);
+                                }
+                            });
                 })
+                .switchIfEmpty(Mono.defer(() -> fcmRepo.deleteToken(deviceId).then()))
                 .then();
     }
 

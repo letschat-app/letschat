@@ -95,6 +95,15 @@ public class EventService {
     }
 
     private void triggerEventBannerAndNotification(String chatId, String userId, String groupEventId, String eventTitle, String action, Instant start) {
+        String effectiveStart = start != null ? start.toString() : "";
+        triggerEventBannerAndNotification(chatId, userId, groupEventId, eventTitle, action, start, Collections.emptyList(), effectiveStart, "", "");
+    }
+
+    private void triggerEventBannerAndNotification(
+            String chatId, String userId, String groupEventId, String eventTitle,
+            String action, Instant start, List<Map<String, String>> changesList,
+            String effectiveStartTime, String location, String personName
+    ) {
         if (chatId == null || chatId.isEmpty() || userId == null || userId.isEmpty()) return;
 
         userInfoRepo.findById(userId)
@@ -162,7 +171,7 @@ public class EventService {
                                     ? (userName + " postponed \"" + safeTitle + "\" in " + groupName)
                                     : (userName + " scheduled \"" + safeTitle + "\" in " + groupName);
 
-                            String startStr = (start != null) ? start.toString() : "";
+                            String v2Action = "scheduled".equals(actionLower) ? "created" : actionLower;
 
                             return userChatInfoRepo.findUserIds(chatId)
                                 .filter(mId -> !mId.equals(userId))
@@ -174,7 +183,12 @@ public class EventService {
                                         groupEventId,
                                         safeTitle,
                                         notifSummary,
-                                        startStr
+                                        effectiveStartTime,
+                                        v2Action,
+                                        changesList,
+                                        effectiveStartTime,
+                                        location,
+                                        personName
                                     );
                                 })
                                 .then();
@@ -470,38 +484,47 @@ public class EventService {
         Instant start = dto.getStartTime();
         Instant end = dto.getEndTime() != null ? dto.getEndTime() : (start != null ? start.plus(1, ChronoUnit.HOURS) : null);
 
-        Mono<Integer> syncMono = Mono.just(0);
-
+        Mono<EventInfo> existingMono = Mono.empty();
         if (dto.getGroupEventId() != null && !dto.getGroupEventId().isEmpty()) {
-            syncMono = eventInfoRepo.syncGroupEvent(
-                dto.getGroupEventId(),
-                dto.getEventTitle(),
-                start,
-                end,
-                dto.getEventDetails(),
-                dto.getEventColor(),
-                dto.getAction(),
-                dto.getMeetingType(),
-                dto.getMeetingLink(),
-                dto.getLocation()
-            );
+            existingMono = eventInfoRepo.findByGroupEventId(dto.getGroupEventId()).next();
         } else if (dto.getChatId() != null && dto.getMsgId() != null && !dto.getMsgId().trim().isEmpty()) {
-            syncMono = eventInfoRepo.syncByChatAndMsgId(
-                dto.getChatId(),
-                dto.getMsgId().trim(),
-                dto.getEventTitle(),
-                start,
-                end,
-                dto.getEventDetails(),
-                dto.getEventColor(),
-                dto.getAction(),
-                dto.getMeetingType(),
-                dto.getMeetingLink(),
-                dto.getLocation()
-            );
+            existingMono = eventInfoRepo.findByChatIdAndMsgId(dto.getChatId(), dto.getMsgId().trim()).next();
         } else if (dto.getEventId() != null) {
-            syncMono = eventInfoRepo.findById(dto.getEventId())
-                .flatMap(existing -> {
+            existingMono = eventInfoRepo.findById(dto.getEventId());
+        }
+
+        return existingMono.defaultIfEmpty(new EventInfo()).flatMap(existing -> {
+            Mono<Integer> syncMono = Mono.just(0);
+
+            if (dto.getGroupEventId() != null && !dto.getGroupEventId().isEmpty()) {
+                syncMono = eventInfoRepo.syncGroupEvent(
+                    dto.getGroupEventId(),
+                    dto.getEventTitle(),
+                    start,
+                    end,
+                    dto.getEventDetails(),
+                    dto.getEventColor(),
+                    dto.getAction(),
+                    dto.getMeetingType(),
+                    dto.getMeetingLink(),
+                    dto.getLocation()
+                );
+            } else if (dto.getChatId() != null && dto.getMsgId() != null && !dto.getMsgId().trim().isEmpty()) {
+                syncMono = eventInfoRepo.syncByChatAndMsgId(
+                    dto.getChatId(),
+                    dto.getMsgId().trim(),
+                    dto.getEventTitle(),
+                    start,
+                    end,
+                    dto.getEventDetails(),
+                    dto.getEventColor(),
+                    dto.getAction(),
+                    dto.getMeetingType(),
+                    dto.getMeetingLink(),
+                    dto.getLocation()
+                );
+            } else if (dto.getEventId() != null) {
+                if (existing.getEventId() != null) {
                     existing.setEventTitle(dto.getEventTitle());
                     existing.setStartTime(start);
                     existing.setEndTime(end);
@@ -511,59 +534,75 @@ public class EventService {
                     existing.setMeetingType(dto.getMeetingType());
                     existing.setMeetingLink(dto.getMeetingLink());
                     existing.setLocation(dto.getLocation());
-                    return eventInfoRepo.save(existing).thenReturn(1);
-                })
-                .defaultIfEmpty(0);
-        }
-
-        return syncMono.flatMap(rowsUpdated -> {
-            if (dto.getChatId() != null && !dto.getChatId().isEmpty()) {
-                EventSyncMessageDTO syncMsg = new EventSyncMessageDTO();
-                syncMsg.setType("event_sync");
-                syncMsg.setGroupEventId(dto.getGroupEventId());
-                syncMsg.setChatId(dto.getChatId());
-                syncMsg.setMsgId(dto.getMsgId());
-                syncMsg.setEventTitle(dto.getEventTitle());
-                syncMsg.setStartTime(start);
-                syncMsg.setEndTime(end);
-                syncMsg.setAction(dto.getAction());
-                syncMsg.setEventColor(dto.getEventColor());
-                syncMsg.setMeetingType(dto.getMeetingType());
-                syncMsg.setMeetingLink(dto.getMeetingLink());
-                syncMsg.setLocation(dto.getLocation());
-                syncMsg.setUpdatedBy(userId);
-
-                // Send push notification to group members (offline recipients)
-                String summary = "Event updated";
-                if ("cancelled".equalsIgnoreCase(dto.getAction())) {
-                    summary = "Meeting cancelled";
-                } else if (start != null) {
-                    summary = "Rescheduled to " + start.toString();
-                } else if (dto.getLocation() != null && !dto.getLocation().isEmpty()) {
-                    summary = "Location updated: " + dto.getLocation();
+                    syncMono = eventInfoRepo.save(existing).thenReturn(1);
                 }
-                final String finalSummary = summary;
-                final String startTimeStr = start != null ? start.toString() : "";
-
-                groupInfoRepo.getMembers(dto.getChatId())
-                    .map(m -> m.getUserId())
-                    .filter(mId -> !mId.equals(userId))
-                    .doOnNext(memberId -> {
-                        notificationService.sendEventChange(
-                            memberId,
-                            dto.getGroupEventId(),
-                            dto.getEventTitle(),
-                            finalSummary,
-                            startTimeStr
-                        );
-                    })
-                    .subscribe();
-
-                triggerEventBannerAndNotification(dto.getChatId(), userId, dto.getGroupEventId(), dto.getEventTitle(), dto.getAction(), start);
-                return myWebSocketHandler.broadcastEventSync(dto.getChatId(), userId, syncMsg)
-                    .thenReturn("updated");
             }
-            return Mono.just("updated");
+
+            return syncMono.flatMap(rowsUpdated -> {
+                if (dto.getChatId() != null && !dto.getChatId().isEmpty()) {
+                    EventSyncMessageDTO syncMsg = new EventSyncMessageDTO();
+                    syncMsg.setType("event_sync");
+                    syncMsg.setGroupEventId(dto.getGroupEventId());
+                    syncMsg.setChatId(dto.getChatId());
+                    syncMsg.setMsgId(dto.getMsgId());
+                    syncMsg.setEventTitle(dto.getEventTitle());
+                    syncMsg.setStartTime(start);
+                    syncMsg.setEndTime(end);
+                    syncMsg.setAction(dto.getAction());
+                    syncMsg.setEventColor(dto.getEventColor());
+                    syncMsg.setMeetingType(dto.getMeetingType());
+                    syncMsg.setMeetingLink(dto.getMeetingLink());
+                    syncMsg.setLocation(dto.getLocation());
+                    syncMsg.setUpdatedBy(userId);
+
+                    List<Map<String, String>> changesList = new ArrayList<>();
+                    if (existing != null && existing.getStartTime() != null) {
+                        if (start != null && !existing.getStartTime().equals(start)) {
+                            Map<String, String> timeDiff = new LinkedHashMap<>();
+                            timeDiff.put("field", "time");
+                            timeDiff.put("from", existing.getStartTime().toString());
+                            timeDiff.put("to", start.toString());
+                            changesList.add(timeDiff);
+                        }
+                        if (existing.getLocation() != null && dto.getLocation() != null && !existing.getLocation().equals(dto.getLocation())) {
+                            Map<String, String> locDiff = new LinkedHashMap<>();
+                            locDiff.put("field", "location");
+                            locDiff.put("from", existing.getLocation());
+                            locDiff.put("to", dto.getLocation());
+                            changesList.add(locDiff);
+                        }
+                        if (existing.getEventTitle() != null && dto.getEventTitle() != null && !existing.getEventTitle().equals(dto.getEventTitle())) {
+                            Map<String, String> titleDiff = new LinkedHashMap<>();
+                            titleDiff.put("field", "title");
+                            titleDiff.put("from", existing.getEventTitle());
+                            titleDiff.put("to", dto.getEventTitle());
+                            changesList.add(titleDiff);
+                        }
+                    }
+
+                    String effectiveStartTime = ("cancelled".equalsIgnoreCase(dto.getAction()) && existing != null && existing.getStartTime() != null)
+                            ? existing.getStartTime().toString()
+                            : (start != null ? start.toString() : "");
+
+                    // Single unified push via triggerEventBannerAndNotification, excluding acting user
+                    triggerEventBannerAndNotification(
+                        dto.getChatId(),
+                        userId,
+                        dto.getGroupEventId(),
+                        dto.getEventTitle(),
+                        dto.getAction(),
+                        start,
+                        changesList,
+                        effectiveStartTime,
+                        dto.getLocation(),
+                        ""
+                    );
+
+                    return myWebSocketHandler.broadcastEventSync(dto.getChatId(), userId, syncMsg)
+                        .thenReturn("updated");
+                }
+                return Mono.just("updated");
+            });
         });
     }
 
@@ -701,12 +740,19 @@ public class EventService {
                                 myWebSocketHandler.sendToUser(host.getUserId(), alert);
 
                                 // Send push notification to Host (in case offline)
-                                notificationService.sendEventChange(
+                                notificationService.sendGroupEventNotification(
                                     host.getUserId(),
+                                    "",
+                                    "",
                                     String.valueOf(saved.getEventId()),
                                     dto.getAgenda() != null ? dto.getAgenda() : "New Meeting Request",
                                     (dto.getBookerName() != null ? dto.getBookerName() : "A user") + " booked a meeting",
-                                    start.toString()
+                                    start.toString(),
+                                    "booking_request",
+                                    Collections.emptyList(),
+                                    start.toString(),
+                                    dto.getLocation() != null ? dto.getLocation() : "",
+                                    dto.getBookerName() != null ? dto.getBookerName() : "A user"
                                 );
 
                                 // If guest is also a LetsChat user: NO email, send WebSocket update
@@ -903,12 +949,25 @@ public class EventService {
                         // Send push notification to the other party (offline recipient)
                         String recipientUserId = isHost ? saved.getGuestUserId() : saved.getUserId();
                         if (recipientUserId != null && !recipientUserId.isEmpty()) {
-                            notificationService.sendEventChange(
+                            String bookingAction = "approved".equalsIgnoreCase(saved.getExternalStatus()) ? "booking_approved"
+                                    : "declined".equalsIgnoreCase(saved.getExternalStatus()) ? "booking_declined"
+                                    : "updated";
+                            String personName = isHost
+                                    ? (saved.getExternalBookerName() != null ? saved.getExternalBookerName() : "")
+                                    : (saved.getCreatorName() != null ? saved.getCreatorName() : "Host");
+                            notificationService.sendGroupEventNotification(
                                 recipientUserId,
+                                "",
+                                "",
                                 String.valueOf(saved.getEventId()),
                                 saved.getEventTitle() != null ? saved.getEventTitle() : "Meeting Booking",
                                 saved.getChangeMessage() != null ? saved.getChangeMessage() : "Meeting details changed to " + saved.getExternalStatus(),
-                                saved.getStartTime() != null ? saved.getStartTime().toString() : ""
+                                saved.getStartTime() != null ? saved.getStartTime().toString() : "",
+                                bookingAction,
+                                Collections.emptyList(),
+                                saved.getStartTime() != null ? saved.getStartTime().toString() : "",
+                                saved.getLocation() != null ? saved.getLocation() : "",
+                                personName
                             );
                         }
 
@@ -1028,12 +1087,21 @@ public class EventService {
 
                 return eventInfoRepo.save(ev).map(saved -> {
                     if (saved.getGuestUserId() != null && !saved.getGuestUserId().isEmpty()) {
-                        notificationService.sendEventChange(
+                        String bookingAction = approve ? "booking_approved" : "booking_declined";
+                        String hostName = saved.getCreatorName() != null ? saved.getCreatorName() : "Host";
+                        notificationService.sendGroupEventNotification(
                             saved.getGuestUserId(),
+                            "",
+                            "",
                             String.valueOf(saved.getEventId()),
                             saved.getEventTitle() != null ? saved.getEventTitle() : "Meeting Booking",
                             approve ? "Host approved the meeting request" : "Host declined the meeting request",
-                            saved.getStartTime() != null ? saved.getStartTime().toString() : ""
+                            saved.getStartTime() != null ? saved.getStartTime().toString() : "",
+                            bookingAction,
+                            Collections.emptyList(),
+                            saved.getStartTime() != null ? saved.getStartTime().toString() : "",
+                            saved.getLocation() != null ? saved.getLocation() : "",
+                            hostName
                         );
                     }
                     return approve ? "approved" : "declined";

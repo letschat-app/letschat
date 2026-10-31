@@ -32,6 +32,19 @@ public interface FCMRepo extends ReactiveCrudRepository<UserTokenModel,String>{
     Mono<UserTokenModel> deleteToken(String deviceId);
 
     @Query("""
+        DELETE FROM "UserFCMToken"
+        WHERE fcm_token = :token
+    """)
+    Mono<Void> deleteByToken(String token);
+
+    @Query("""
+        SELECT * FROM "UserFCMToken"
+        WHERE device_id = :deviceId
+        LIMIT 1
+    """)
+    Mono<UserTokenModel> findByDeviceId(String deviceId);
+
+    @Query("""
         SELECT user_id, fcm_token
         FROM "UserFCMToken"
     """)
