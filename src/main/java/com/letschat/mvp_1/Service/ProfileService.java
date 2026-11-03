@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import reactor.core.publisher.Mono;
 
+@Deprecated
 @Component
 public class ProfileService {
     private final String rootpath="C:\\Users\\ADMIN\\Desktop\\letschat\\media\\uploads\\profiles";

@@ -65,6 +65,7 @@ public class MediaController {
         this.uploadMediaService=uploadMediaService;
         this.mediaSaveService=mediaSaveService;
     }
+    @Deprecated
     @PostMapping("/uploads")
     public Mono<ResponseEntity<String>> uploads(@RequestPart("file") Mono<FilePart> fileMono){
         return fileMono.flatMap(profileService::upload)

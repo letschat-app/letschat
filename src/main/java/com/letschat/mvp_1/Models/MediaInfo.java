@@ -17,10 +17,12 @@ public class MediaInfo {
     private String fileHash;
     @Column("file_key")
     private String fileKey;
+    @Column("thumbnail_key")
     private String thumbnailKey;
     private Long fileSize;
     private Instant createdAt;
     private String userId;
+    @Column("no_of_pages")
     private Integer noOfPages;
     private Integer duration;
 

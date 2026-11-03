@@ -27,9 +27,15 @@ public class MediaSaveService {
     public Mono<MediaInfo> getMedia(Long id) {
         return mediaRepo.findById(id)
         .map(media -> {
-            if (!media.getFileKey().startsWith("http")) {
+            if (media.getFileKey() != null && !media.getFileKey().startsWith("http")) {
                 media.setFileKey(BaseUrl + media.getFileKey());
-                media.setThumbnailKey(BaseUrl+media.getThumbnailKey());
+            }
+            if (media.getThumbnailKey() != null && !media.getThumbnailKey().trim().isEmpty() && !media.getThumbnailKey().equalsIgnoreCase("null")) {
+                if (!media.getThumbnailKey().startsWith("http")) {
+                    media.setThumbnailKey(BaseUrl + media.getThumbnailKey());
+                }
+            } else {
+                media.setThumbnailKey(null);
             }
             return media;
         });

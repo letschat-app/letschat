@@ -10,12 +10,12 @@ import reactor.core.publisher.Mono;
 @Component
 public class UserProfileService {
     private final UserInfoRepo userInfoRepo;
-    private final ProfileService profileService;
+
     private final UserChatInfoRepo userChatInfoRepo;
 
-    public UserProfileService (UserInfoRepo userInfoRepo, ProfileService profileService, UserChatInfoRepo userChatInfoRepo){
+    public UserProfileService (UserInfoRepo userInfoRepo, UserChatInfoRepo userChatInfoRepo){
         this.userInfoRepo = userInfoRepo;
-        this.profileService = profileService;
+
         this.userChatInfoRepo = userChatInfoRepo;
     }
 
