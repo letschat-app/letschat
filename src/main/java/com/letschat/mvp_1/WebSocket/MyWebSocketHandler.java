@@ -1,5 +1,7 @@
 package com.letschat.mvp_1.WebSocket;
 
+import java.util.Set;
+
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -69,8 +71,28 @@ public class MyWebSocketHandler implements WebSocketHandler{
         this.transactionalOperator=transactionalOperator;
     }
     private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> userstatus=new ConcurrentHashMap<>();
+
+    // Connection-level chat presence tracking (Item R3)
+    // Key: userId -> (Key: chatId -> Set of active sessionIds viewing that chat)
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, Set<String>>> userActiveChatSessions = new ConcurrentHashMap<>();
+    // Fast inverse lookup: sessionId -> Set of active chatIds
+    private final ConcurrentHashMap<String, Set<String>> sessionActiveChats = new ConcurrentHashMap<>();
+
+    public boolean isReceiverActive(String receiverId, String chatId) {
+        if (receiverId == null || chatId == null) return false;
+        Set<Sinks.Many<String>> rSinks = usersinks.get(receiverId);
+        boolean hasLiveSocket = (rSinks != null && !rSinks.isEmpty()) || usersink.get(receiverId) != null;
+        if (!hasLiveSocket) return false;
+
+        ConcurrentHashMap<String, Set<String>> chatMap = userActiveChatSessions.get(receiverId);
+        if (chatMap == null) return false;
+        Set<String> sessions = chatMap.get(chatId);
+        return sessions != null && !sessions.isEmpty();
+    }
     private final Map<String,String>userid=new ConcurrentHashMap<>();
     private final Map<String,Sinks.Many<String>>usersink=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Set<Sinks.Many<String>>> usersinks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Sinks.Many<String>> sessionsinks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String,ConcurrentHashMap<String,String>> username=new ConcurrentHashMap<>();
     //chatid<userid,username>
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<String>> userchats = new ConcurrentHashMap<>();
@@ -103,14 +125,9 @@ public class MyWebSocketHandler implements WebSocketHandler{
 
         final String finalId = id; 
 
-    usersink.compute(id, (key, oldSink) -> {
-        if (oldSink != null) {
-            System.out.println("removing old");
-            oldSink.tryEmitComplete();
-            userid.entrySet().removeIf(entry -> entry.getValue().equals(finalId)); 
-        }
-        return sink;
-    });
+    sessionsinks.put(sessionid, sink);
+    usersinks.computeIfAbsent(id, k -> ConcurrentHashMap.newKeySet()).add(sink);
+    usersink.put(id, sink);
 
     adminService.onUserConnected(id);
     userid.put(sessionid, id);
@@ -141,17 +158,34 @@ public class MyWebSocketHandler implements WebSocketHandler{
         .doOnError(err -> System.out.println("error:" + err.getMessage()))
         .doFinally(status -> {
             String uid = userid.remove(sessionid);
-            System.out.println(userid.size());
+            sessionsinks.remove(sessionid);
+            Set<String> activeChatsForSession = sessionActiveChats.remove(sessionid);
             if (uid != null) { 
-                adminService.onUserDisconnected(uid);
-                usersink.computeIfPresent(uid, (key, currentSink) -> {
-                    if (currentSink == sink) {
-                        currentSink.tryEmitComplete();
-                        System.out.println("closed");
-                        return null;
+                if (activeChatsForSession != null) {
+                    ConcurrentHashMap<String, Set<String>> userChats = userActiveChatSessions.get(uid);
+                    if (userChats != null) {
+                        for (String cId : activeChatsForSession) {
+                            Set<String> sessSet = userChats.get(cId);
+                            if (sessSet != null) {
+                                sessSet.remove(sessionid);
+                                if (sessSet.isEmpty()) {
+                                    userChats.remove(cId);
+                                }
+                            }
+                        }
                     }
-                    return currentSink;
+                }
+                usersinks.computeIfPresent(uid, (key, set) -> {
+                    set.remove(sink);
+                    return set.isEmpty() ? null : set;
                 });
+                if (!usersinks.containsKey(uid) || usersinks.get(uid).isEmpty()) {
+                    usersinks.remove(uid);
+                    usersink.remove(uid);
+                    userActiveChatSessions.remove(uid);
+                    userstatus.remove(uid); // Clear active chat presence when user disconnects
+                    adminService.onUserDisconnected(uid);
+                }
             }
             System.out.println("removed");
         })
@@ -298,7 +332,14 @@ public void removeUserFromChatCache(String chatId, String userId) {
         long now = System.currentTimeMillis();
         long idleTtl = 60 * 60 * 1000L; // 1 hour
 
-        // 1. Clean "in-active" entries and empty/offline maps from userstatus
+        // 1. Clean "in-active" entries and empty/offline maps from userActiveChatSessions and userstatus
+        userActiveChatSessions.entrySet().removeIf(entry -> {
+            String uid = entry.getKey();
+            ConcurrentHashMap<String, Set<String>> chatMap = entry.getValue();
+            if (chatMap == null) return true;
+            chatMap.entrySet().removeIf(e -> e.getValue() == null || e.getValue().isEmpty());
+            return chatMap.isEmpty() || !usersinks.containsKey(uid);
+        });
         userstatus.entrySet().removeIf(entry -> {
             String uid = entry.getKey();
             ConcurrentHashMap<String, String> chatMap = entry.getValue();
@@ -456,7 +497,13 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                                                     readUsers,
                                                     LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"))
                                                 )
-                                                .then(messageTrackHistoryRepo.batchInsert(msgId, userId, receiverIds, statuses, deliveredTimes));
+                                                .then(
+                                                    messageTrackHistoryRepo.batchInsert(msgId, userId, receiverIds, statuses, deliveredTimes)
+                                                        .onErrorResume(e -> {
+                                                            System.err.println("Error saving track history for poll msg " + msgId + ": " + e.getMessage());
+                                                            return Mono.empty();
+                                                        })
+                                                );
                                             });
                                     });
                             })
@@ -464,106 +511,107 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                     .then()
                     .onErrorResume(e -> sendAckAsync(senderSink, chatId, data.gettempmsgid(), null, "error"));
             }
-            return getType(chatId)
-                .flatMap(type ->
-                    getusername(chatId, userId)
-                        .flatMap(username ->
-                            getUserIds(chatId, userId)
-                                .<MessageResult>flatMap(receiverId ->
-                                    sendMessage(
-                                        receiverId,
-                                        chatId,
-                                        userId,
-                                        username,
-                                        type,
-                                        data,
-                                        msgId
-                                    )
-                                )
-                                .collectList()
-                                .flatMap(results -> {
-
-                                    String finalStatus = "read";
-
-                                    for (MessageResult result : results) {
-
-                                        if ("pending".equals(result.status())) {
-                                            finalStatus = "pending";
-                                            break;
-                                        }
-
-                                        if ("delivered".equals(result.status())) {
-                                            finalStatus = "delivered";
-                                        }
-                                    }
-
-                                    // SEND ACK AFTER MESSAGE
-                                    List<String> receiverIds = results.stream()
-                                        .map(MessageResult::receiverId)
-                                        .toList();
-
-                                    List<String> statuses = results.stream()
-                                        .map(MessageResult::status)
-                                        .toList();
-
-                                    List<LocalDateTime> deliveredTimes = results.stream()
-                                        .map(MessageResult::deliveredTime)
-                                        .toList();
-
-                                    List<String> pendingUsers = results.stream()
-                                        .filter(r -> "pending".equals(r.status()))
-                                        .map(MessageResult::receiverId)
-                                        .toList();
-
-                                    List<String> deliveredUsers = results.stream()
-                                        .filter(r -> "delivered".equals(r.status()))
-                                        .map(MessageResult::receiverId)
-                                        .toList();
-
-                                    List<String> readUsers = results.stream()
-                                        .filter(r -> "read".equals(r.status()))
-                                        .map(MessageResult::receiverId)
-                                        .toList();
-
-                                    LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
-
-                                    return sendAckAsync(
-                                        senderSink,
-                                        chatId,
-                                        data.gettempmsgid(),
-                                        msgId,
-                                        finalStatus,
-                                        pendingUsers,
-                                        deliveredUsers,
-                                        readUsers,
-                                        now
-                                    )
-                                    .then(
-                                        messageInfoRepo.insert(
-                                            msgId,
+            // R5: Persist message in database FIRST before delivering to receivers or firing pushes!
+            return messageInfoRepo.insert(
+                msgId,
+                chatId,
+                userId,
+                data.gettype(),
+                data.getcontent(),
+                data.getrepliedto(),
+                data.getforwardedfrom(),
+                data.gettimestamp(),
+                data.getspaceid()
+            )
+            .flatMap(saved ->
+                getType(chatId)
+                    .flatMap(type ->
+                        getusername(chatId, userId)
+                            .flatMap(username ->
+                                getUserIds(chatId, userId)
+                                    .<MessageResult>flatMap(receiverId ->
+                                        sendMessage(
+                                            receiverId,
                                             chatId,
                                             userId,
-                                            data.gettype(),
-                                            data.getcontent(),
-                                            data.getrepliedto(),
-                                            data.getforwardedfrom(),
-                                            data.gettimestamp(),
-                                            data.getspaceid()
+                                            username,
+                                            type,
+                                            data,
+                                            msgId
                                         )
                                     )
-                                    .then(
-                                        messageTrackHistoryRepo.batchInsert(
+                                    .collectList()
+                                    .flatMap(results -> {
+                                        String finalStatus = "read";
+
+                                        for (MessageResult result : results) {
+                                            if ("pending".equals(result.status())) {
+                                                finalStatus = "pending";
+                                                break;
+                                            }
+                                            if ("delivered".equals(result.status())) {
+                                                finalStatus = "delivered";
+                                            }
+                                        }
+
+                                        List<String> receiverIds = results.stream()
+                                            .map(MessageResult::receiverId)
+                                            .toList();
+
+                                        List<String> statuses = results.stream()
+                                            .map(MessageResult::status)
+                                            .toList();
+
+                                        List<LocalDateTime> deliveredTimes = results.stream()
+                                            .map(MessageResult::deliveredTime)
+                                            .toList();
+
+                                        List<String> pendingUsers = results.stream()
+                                            .filter(r -> "pending".equals(r.status()))
+                                            .map(MessageResult::receiverId)
+                                            .toList();
+
+                                        List<String> deliveredUsers = results.stream()
+                                            .filter(r -> "delivered".equals(r.status()))
+                                            .map(MessageResult::receiverId)
+                                            .toList();
+
+                                        List<String> readUsers = results.stream()
+                                            .filter(r -> "read".equals(r.status()))
+                                            .map(MessageResult::receiverId)
+                                            .toList();
+
+                                        LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+
+                                        return sendAckAsync(
+                                            senderSink,
+                                            chatId,
+                                            data.gettempmsgid(),
                                             msgId,
-                                            userId,
-                                            receiverIds,
-                                            statuses,
-                                            deliveredTimes
+                                            finalStatus,
+                                            pendingUsers,
+                                            deliveredUsers,
+                                            readUsers,
+                                            now
                                         )
-                                    );
-                                })
-                        )
-                )
-                .then()
+                                        .then(
+                                            messageTrackHistoryRepo.batchInsert(
+                                                msgId,
+                                                userId,
+                                                receiverIds,
+                                                statuses,
+                                                deliveredTimes
+                                            )
+                                            .onErrorResume(e -> {
+                                                System.err.println("Error saving track history for msg " + msgId + ": " + e.getMessage());
+                                                return Mono.empty();
+                                            })
+                                        );
+                                    })
+                            )
+                    )
+            )
+            .then()
                 .doOnSuccess(v -> {
                     adminService.onMessageSent();
                     adminService.onUserActivity(userId);
@@ -605,9 +653,7 @@ private Mono<MessageResult> sendMessage(
             userId
         );
 
-    boolean isReceiverActive = receiverSink != null && "active".equals(
-        userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId)
-    );
+    boolean isReceiverActive = isReceiverActive(receiverId, chatId);
 
     if (!isReceiverActive) {
         fireNotification(
@@ -650,30 +696,8 @@ private Mono<MessageResult> sendMessage(
     // NORMAL CHAT
     if (receiverSink != null) {
 
-        userstatus
-            .computeIfAbsent(
-                receiverId,
-                k -> new ConcurrentHashMap<>()
-            )
-            .putIfAbsent(
-                chatId,
-                "in-active"
-            );
-
-        boolean isActive =
-            "active".equals(
-                userstatus
-                    .getOrDefault(
-                        receiverId,
-                        new ConcurrentHashMap<>()
-                    )
-                    .get(chatId)
-            );
-
-        String status =
-            isActive
-                ? "read"
-                : "delivered";
+        boolean isActive = isReceiverActive;
+        String status = isActive ? "read" : "delivered";
 
         LocalDateTime deliveredTime =
             LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
@@ -715,17 +739,14 @@ private Mono<MessageResult> sendMessageWithPoll(
     tempDTO.settype(msg.gettype());
     tempDTO.setspaceid(msg.getspaceid());
 
-    boolean isReceiverActive = receiverSink != null && "active".equals(
-        userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId)
-    );
+    boolean isReceiverActive = isReceiverActive(receiverId, chatId);
 
     if (!isReceiverActive) {
         fireNotification(receiverId, chatId, userId, username, tempDTO, type, msg.getmsgid());
     }
 
     if (receiverSink != null) {
-        userstatus.computeIfAbsent(receiverId, k -> new ConcurrentHashMap<>()).putIfAbsent(chatId, "in-active");
-        boolean isActive = "active".equals(userstatus.getOrDefault(receiverId, new ConcurrentHashMap<>()).get(chatId));
+        boolean isActive = isReceiverActive;
         String status = isActive ? "read" : "delivered";
         LocalDateTime deliveredTime = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
@@ -800,13 +821,6 @@ private String deriveChatKind(String chatId, String type) {
     }
     if (type != null && "private".equalsIgnoreCase(type)) {
         return "dm";
-    }
-    if (type != null && ("group".equalsIgnoreCase(type) || "classroom".equalsIgnoreCase(type))) {
-        java.util.concurrent.CopyOnWriteArrayList<String> members = userchats.get(chatId);
-        if (members != null && members.size() == 2) {
-            return "dm";
-        }
-        return "group";
     }
     return "group";
 }
@@ -905,7 +919,7 @@ private void fireNotification(String receiverId, String chatId, String senderId,
             System.out.println("loadmsg: session not found " + sessionid);
             return Mono.empty();
         }
-        Sinks.Many<String> sender_sink = usersink.get(Userid);
+        Sinks.Many<String> sender_sink = sessionsinks.getOrDefault(sessionid, usersink.get(Userid));
         if (sender_sink == null) {
             System.out.println("loadmsg: sink not found for " + Userid);
             return Mono.empty();
@@ -924,6 +938,11 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                             case "load": {
                                 LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
                                 if (!isRoomOrClassroom) {
+                                    userActiveChatSessions.computeIfAbsent(Userid, k -> new ConcurrentHashMap<>())
+                                        .computeIfAbsent(chatId, k -> ConcurrentHashMap.newKeySet())
+                                        .add(sessionid);
+                                    sessionActiveChats.computeIfAbsent(sessionid, k -> ConcurrentHashMap.newKeySet())
+                                        .add(chatId);
                                     userstatus.compute(Userid, (key, chatmap) -> {
                                         if (chatmap == null) chatmap = new ConcurrentHashMap<>();
                                         chatmap.put(chatId, "active");
@@ -1119,7 +1138,12 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                             }
                             case "check-in": {
                                 LocalDateTime now = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
-                                System.out.println("check in " + chatId);
+                                System.out.println("check in " + chatId + " session " + sessionid);
+                                userActiveChatSessions.computeIfAbsent(Userid, k -> new ConcurrentHashMap<>())
+                                    .computeIfAbsent(chatId, k -> ConcurrentHashMap.newKeySet())
+                                    .add(sessionid);
+                                sessionActiveChats.computeIfAbsent(sessionid, k -> ConcurrentHashMap.newKeySet())
+                                    .add(chatId);
                                 userstatus.compute(Userid, (key, chatmap) -> {
                                     if (chatmap == null) chatmap = new ConcurrentHashMap<>();
                                     chatmap.put(chatId, "active");
@@ -1163,11 +1187,28 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                                     });
                             }
                             case "check-out": {
-                                System.out.println("check out " + chatId);
-                                userstatus.compute(Userid, (key, chatmap) -> {
-                                    if (chatmap == null) chatmap = new ConcurrentHashMap<>();
-                                    chatmap.put(chatId, "in-active");
-                                    return chatmap;
+                                System.out.println("check out " + chatId + " session " + sessionid);
+                                ConcurrentHashMap<String, Set<String>> chatMap = userActiveChatSessions.get(Userid);
+                                if (chatMap != null) {
+                                    Set<String> sessions = chatMap.get(chatId);
+                                    if (sessions != null) {
+                                        sessions.remove(sessionid);
+                                        if (sessions.isEmpty()) {
+                                            chatMap.remove(chatId);
+                                        }
+                                    }
+                                }
+                                Set<String> sChats = sessionActiveChats.get(sessionid);
+                                if (sChats != null) {
+                                    sChats.remove(chatId);
+                                }
+                                userstatus.compute(Userid, (key, chm) -> {
+                                    if (chm == null) chm = new ConcurrentHashMap<>();
+                                    // Only mark in-active if no active sessions remain
+                                    if (!isReceiverActive(Userid, chatId)) {
+                                        chm.put(chatId, "in-active");
+                                    }
+                                    return chm;
                                 });
                                 return Mono.empty();
                             }
@@ -1478,9 +1519,7 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                                 receiverSink.tryEmitNext(sendJson);
                                 if (!targetUserId.equals(senderId)) {
                                     status.set("delivered");
-                                    userstatus.computeIfAbsent(targetUserId, k -> new ConcurrentHashMap<>())
-                                        .putIfAbsent(chatId, "in-active");
-                                    if ("active".equals(userstatus.get(targetUserId).get(chatId))) {
+                                    if (isReceiverActive(targetUserId, chatId)) {
                                         status.set("read");
                                     }
                                 }
@@ -1541,9 +1580,7 @@ private void fireNotification(String receiverId, String chatId, String senderId,
             } catch (Exception e) {
                 return Mono.error(e);
             }
-            boolean isReceiverActive = receiverSink != null && "active".equals(
-                userstatus.getOrDefault(uid, new ConcurrentHashMap<>()).get(msg.getChatId())
-            );
+            boolean isReceiverActive = isReceiverActive(uid, msg.getChatId());
 
             if (!uid.equals(msg.getSenderId()) && !isReceiverActive) {
                 ReceivingMessageDTO schedData = new ReceivingMessageDTO();
@@ -1561,15 +1598,7 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                 status = "delivered";
                 delTime = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
-                userstatus
-                        .computeIfAbsent(uid, k -> new ConcurrentHashMap<>())
-                        .putIfAbsent(msg.getChatId(), "in-active");
-
-                if ("active".equals(
-                        userstatus
-                                .getOrDefault(uid, new ConcurrentHashMap<>())
-                                .get(msg.getChatId()))) {
-
+                if (isReceiverActive) {
                     status = "read";
                 }
                 if(!uid.equals(msg.getSenderId())){

@@ -20,13 +20,21 @@ public class UserTokenService {
     }
 
     // =========================
-    // REGISTER TOKEN (FIXED)
+    // REGISTER TOKEN (FIXED - A3, A4)
     // =========================
     public Mono<UserTokenModel> registerToken(String userId, String deviceId, String token) {
-
-        return fcmRepo.saveToken(userId, deviceId, token)
-                .doOnNext(old -> {
+        // Evict token from any previous user on this shared browser/device
+        return fcmRepo.evictTokenFromOtherUsers(userId, token)
+                .doOnNext(evicted -> {
+                    if (evicted.getUserId() != null) {
+                        notificationService.removeToken(evicted.getUserId(), token);
+                        notificationService.invalidateTokenCache(evicted.getUserId());
+                    }
+                })
+                .then(fcmRepo.saveToken(userId, deviceId, token))
+                .doOnNext(saved -> {
                     notificationService.putToken(userId, token);
+                    notificationService.invalidateTokenCache(userId);
                 });
     }
 

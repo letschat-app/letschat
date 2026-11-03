@@ -26,6 +26,7 @@ import reactor.core.publisher.Mono;
 
 @Service
 public class EventService {
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(EventService.class);
     private final EventInfoRepo eventInfoRepo;
     private final GroupInfoRepo groupInfoRepo;
     private final UserInfoRepo userInfoRepo;
@@ -1085,9 +1086,9 @@ public class EventService {
                     ev.setAction("cancelled");
                 }
 
-                return eventInfoRepo.save(ev).map(saved -> {
+                return eventInfoRepo.save(ev).flatMap(saved -> {
+                    String bookingAction = approve ? "booking_approved" : "booking_declined";
                     if (saved.getGuestUserId() != null && !saved.getGuestUserId().isEmpty()) {
-                        String bookingAction = approve ? "booking_approved" : "booking_declined";
                         String hostName = saved.getCreatorName() != null ? saved.getCreatorName() : "Host";
                         notificationService.sendGroupEventNotification(
                             saved.getGuestUserId(),
@@ -1103,8 +1104,31 @@ public class EventService {
                             saved.getLocation() != null ? saved.getLocation() : "",
                             hostName
                         );
+                        return Mono.just(approve ? "approved" : "declined");
+                    } else {
+                        logger.info("[BOOKING] External guest booking status changed to {} for eventId={}, bookerEmail={}",
+                                approve ? "approved" : "declined", saved.getEventId(), saved.getExternalBookerEmail());
+                        if (saved.getExternalBookerEmail() != null && !saved.getExternalBookerEmail().trim().isEmpty() && brevoMailService.isConfigured()) {
+                            String manageLink = frontendUrl + "/booking/view/" + (saved.getBookingToken() != null ? saved.getBookingToken() : "");
+                            String note = "Your meeting booking has been " + (approve ? "approved" : "declined") + " by the host.";
+                            String emailHtml = buildGuestEmailHtml(
+                                "Host",
+                                saved.getEventTitle() != null ? saved.getEventTitle() : "Meeting",
+                                saved.getStartTime() != null ? saved.getStartTime().toString() : "",
+                                saved.getEndTime() != null ? saved.getEndTime().toString() : "",
+                                saved.getMeetingType() != null ? saved.getMeetingType() : "offline",
+                                saved.getLocation() != null ? saved.getLocation() : saved.getMeetingLink(),
+                                manageLink,
+                                note
+                            );
+                            return brevoMailService.sendEmail(
+                                saved.getExternalBookerEmail(),
+                                "Meeting Booking " + (approve ? "Approved" : "Declined") + ": " + (saved.getEventTitle() != null ? saved.getEventTitle() : "Meeting"),
+                                emailHtml
+                            ).thenReturn(approve ? "approved" : "declined");
+                        }
+                        return Mono.just(approve ? "approved" : "declined");
                     }
-                    return approve ? "approved" : "declined";
                 });
             });
     }

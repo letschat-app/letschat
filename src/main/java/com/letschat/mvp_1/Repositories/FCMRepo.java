@@ -19,6 +19,13 @@ public interface FCMRepo extends ReactiveCrudRepository<UserTokenModel,String>{
     Mono<UserTokenModel> saveToken(String userId, String deviceId, String token);
 
     @Query("""
+        DELETE FROM "UserFCMToken"
+        WHERE fcm_token = :token AND user_id != :userId
+        RETURNING user_id, device_id, fcm_token
+    """)
+    Flux<UserTokenModel> evictTokenFromOtherUsers(String userId, String token);
+
+    @Query("""
         SELECT fcm_token FROM "UserFCMToken"
         WHERE user_id = :userId
     """)

@@ -10,20 +10,23 @@ import reactor.core.publisher.Flux;
 
 public interface AssignmentRepo extends  ReactiveCrudRepository<AssignmentInfo, Long>{
     @Query("""
-            SELECT "uc"."UserId",
-       ARRAY_AGG("ai"."assignment_id") AS "assignment_ids"
-FROM "UserChat" "uc"
-JOIN "AssignmentInfo" "ai"
-    ON "uc"."ChatId" = "ai"."chat_id"
-LEFT JOIN "SubmissionInfo" "si"
-    ON "si"."assignment_id" = "ai"."assignment_id"
-    AND "si"."user_id" = "uc"."UserId"
-WHERE "si"."submission_id" IS NULL
-  AND "ai"."deadline" > NOW()
-  AND "ai"."deadline" <= NOW() + INTERVAL '3 days'
-GROUP BY "uc"."UserId";
-            """)
-            Flux<MissingAssignmentDTO> findMissingAssignments();
+        SELECT "uc"."UserId",
+               ARRAY_AGG("ai"."assignment_id") AS "assignment_ids"
+        FROM "UserChat" "uc"
+        JOIN "AssignmentInfo" "ai"
+            ON "uc"."ChatId" = "ai"."chat_id"
+        LEFT JOIN "SubmissionInfo" "si"
+            ON "si"."assignment_id" = "ai"."assignment_id"
+            AND "si"."user_id" = "uc"."UserId"
+        WHERE "si"."submission_id" IS NULL
+          AND ("uc"."Status" IS NULL OR LOWER("uc"."Status") = 'allowed')
+          AND ("uc"."Role" IS NULL OR LOWER("uc"."Role") NOT IN ('teacher', 'admin', 'creator', 'owner'))
+          AND ("ai"."status" IS NULL OR LOWER("ai"."status") IN ('open', 'active', 'published'))
+          AND "ai"."deadline" > NOW()
+          AND "ai"."deadline" <= NOW() + INTERVAL '3 days'
+        GROUP BY "uc"."UserId";
+    """)
+    Flux<MissingAssignmentDTO> findMissingAssignments();
 
     @Query("""
             SELECT * FROM "AssignmentInfo"
@@ -33,7 +36,7 @@ GROUP BY "uc"."UserId";
     Flux<AssignmentInfo> findByChatId(String chatId);
 
     @Query("""
-        SELECT ai."assignment_id", ai."title", ai."deadline", uc."ChatName" as "chat_name"
+        SELECT ai."assignment_id", ai."title", ai."deadline", ai."chat_id", uc."ChatName" as "chat_name"
         FROM "AssignmentInfo" ai
         JOIN "UserChat" uc ON uc."ChatId" = ai."chat_id" AND uc."UserId" = :userId
         WHERE ai."assignment_id" IN (:assignmentIds)

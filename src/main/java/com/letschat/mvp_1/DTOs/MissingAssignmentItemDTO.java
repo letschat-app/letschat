@@ -7,6 +7,7 @@ public class MissingAssignmentItemDTO {
     private String title;
     private Instant deadline;
     private String chatName;
+    private String chatId;
 
     public MissingAssignmentItemDTO() {}
 
@@ -15,6 +16,14 @@ public class MissingAssignmentItemDTO {
         this.title = title;
         this.deadline = deadline;
         this.chatName = chatName;
+    }
+
+    public MissingAssignmentItemDTO(Long assignmentId, String title, Instant deadline, String chatName, String chatId) {
+        this.assignmentId = assignmentId;
+        this.title = title;
+        this.deadline = deadline;
+        this.chatName = chatName;
+        this.chatId = chatId;
     }
 
     public Long getAssignmentId() {
@@ -55,5 +64,17 @@ public class MissingAssignmentItemDTO {
 
     public void setChat_name(String chatName) {
         this.chatName = chatName;
+    }
+
+    public String getChatId() {
+        return chatId;
+    }
+
+    public void setChatId(String chatId) {
+        this.chatId = chatId;
+    }
+
+    public void setChat_id(String chatId) {
+        this.chatId = chatId;
     }
 }

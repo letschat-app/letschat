@@ -67,6 +67,14 @@ public final class PushPayloadBuilder {
      * Enforces the <= 3500 bytes UTF-8 FCM limit on data payloads.
      * Trims items/msgs from oldest first, truncates preview if needed.
      */
+    public static String truncateByCodePoints(String str, int maxCodePoints) {
+        if (str == null || maxCodePoints <= 0) return "";
+        int count = str.codePointCount(0, str.length());
+        if (count <= maxCodePoints) return str;
+        int offset = str.offsetByCodePoints(0, maxCodePoints);
+        return str.substring(0, offset);
+    }
+
     public static Map<String, String> fitToLimit(Map<String, String> originalData) {
         if (originalData == null) {
             return new LinkedHashMap<>();
@@ -79,22 +87,26 @@ public final class PushPayloadBuilder {
 
         logger.warn("[PUSH] Payload size {} exceeds {} bytes limit, trimming...", currentSize, MAX_PAYLOAD_BYTES);
 
-        // Attempt 1: Trim items and msgs lists if present
-        String itemsJson = data.get("items");
-        String msgsJson = data.get("msgs");
+        // Step 1: For v2 clients, legacy msgs array is never read by the service worker.
+        // Trim or drop msgs first to save space.
+        if ("2".equals(data.get("v")) && data.containsKey("msgs")) {
+            data.put("msgs", "[]");
+            if (calculatePayloadSize(data) <= MAX_PAYLOAD_BYTES) {
+                return data;
+            }
+        }
 
+        // Step 2: Trim items previews safely by Unicode code points
+        String itemsJson = data.get("items");
         if (itemsJson != null) {
             try {
                 List<Map<String, String>> items = objectMapper.readValue(itemsJson, new TypeReference<List<Map<String, String>>>() {});
-                List<String> msgs = msgsJson != null
-                        ? objectMapper.readValue(msgsJson, new TypeReference<List<String>>() {})
-                        : new ArrayList<>();
 
-                // Truncate each item preview in items list to 100 chars
+                // Truncate each item preview in items list to 80 code points (avoids splitting surrogate pairs)
                 for (Map<String, String> it : items) {
                     String x = it.get("x");
-                    if (x != null && x.length() > 100) {
-                        it.put("x", x.substring(0, 100));
+                    if (x != null) {
+                        it.put("x", truncateByCodePoints(x, 80));
                     }
                 }
                 data.put("items", objectMapper.writeValueAsString(items));
@@ -102,16 +114,10 @@ public final class PushPayloadBuilder {
                     return data;
                 }
 
-                // Drop oldest items one by one
+                // Drop oldest items one by one until only 1 remains
                 while (items.size() > 1 && calculatePayloadSize(data) > MAX_PAYLOAD_BYTES) {
                     items.remove(0);
-                    if (!msgs.isEmpty()) {
-                        msgs.remove(0);
-                    }
                     data.put("items", objectMapper.writeValueAsString(items));
-                    if (msgsJson != null) {
-                        data.put("msgs", objectMapper.writeValueAsString(msgs));
-                    }
                 }
 
                 if (calculatePayloadSize(data) <= MAX_PAYLOAD_BYTES) {
@@ -122,24 +128,24 @@ public final class PushPayloadBuilder {
             }
         }
 
-        // Attempt 2: Truncate preview field
+        // Step 3: Truncate preview field safely by code points
         String preview = data.get("preview");
-        if (preview != null && preview.length() > 50) {
-            data.put("preview", preview.substring(0, 50));
+        if (preview != null) {
+            data.put("preview", truncateByCodePoints(preview, 40));
             if (calculatePayloadSize(data) <= MAX_PAYLOAD_BYTES) {
                 return data;
             }
         }
 
-        // Attempt 3: Truncate newest item preview to 50 chars
+        // Step 4: Truncate newest item preview aggressively if still over limit
         if (data.containsKey("items")) {
             try {
                 List<Map<String, String>> items = objectMapper.readValue(data.get("items"), new TypeReference<List<Map<String, String>>>() {});
                 if (!items.isEmpty()) {
                     Map<String, String> last = items.get(items.size() - 1);
                     String x = last.get("x");
-                    if (x != null && x.length() > 50) {
-                        last.put("x", x.substring(0, 50));
+                    if (x != null) {
+                        last.put("x", truncateByCodePoints(x, 30));
                     }
                     data.put("items", objectMapper.writeValueAsString(items));
                 }
@@ -149,13 +155,14 @@ public final class PushPayloadBuilder {
         return data;
     }
 
-    /**
-     * Constructs WebpushConfig with high or normal urgency and 24h TTL.
-     * Crucial: DOES NOT set any notification block.
-     */
     public static WebpushConfig buildWebpushConfig(String urgency) {
+        return buildWebpushConfig(urgency, 86400L);
+    }
+
+    public static WebpushConfig buildWebpushConfig(String urgency, long ttlSeconds) {
+        long safeTtl = Math.max(60L, Math.min(ttlSeconds, 86400L));
         return WebpushConfig.builder()
-                .putHeader("TTL", "86400")
+                .putHeader("TTL", String.valueOf(safeTtl))
                 .putHeader("Urgency", urgency != null ? urgency : "high")
                 .build();
     }
@@ -275,10 +282,19 @@ public final class PushPayloadBuilder {
 
     public static Message buildEventReminderMessage(Map<String, String> data, String token) {
         Map<String, String> finalData = fitToLimit(data);
+        long ttlSeconds = 300L;
+        String startTimeStr = finalData.get("startTime");
+        if (startTimeStr != null && !startTimeStr.isEmpty()) {
+            try {
+                java.time.Instant start = java.time.Instant.parse(startTimeStr);
+                long diff = java.time.Duration.between(java.time.Instant.now(), start).getSeconds();
+                ttlSeconds = Math.max(60L, Math.min(diff, 86400L));
+            } catch (Exception ignored) {}
+        }
         return Message.builder()
                 .setToken(token)
                 .putAllData(finalData)
-                .setWebpushConfig(buildWebpushConfig("high"))
+                .setWebpushConfig(buildWebpushConfig("high", ttlSeconds))
                 .build();
     }
 
@@ -416,6 +432,15 @@ public final class PushPayloadBuilder {
         data.put("assignments", legacyAssignmentsJson);
 
         data.put("userId", defaultString(userId));
+        if (assignmentsV2List != null && !assignmentsV2List.isEmpty()) {
+            Map<String, String> first = assignmentsV2List.get(0);
+            if (first.containsKey("chatId") && first.get("chatId") != null && !first.get("chatId").isEmpty()) {
+                data.put("chatId", first.get("chatId"));
+            }
+            if (first.containsKey("id") && first.get("id") != null && !first.get("id").isEmpty()) {
+                data.put("assignmentId", first.get("id"));
+            }
+        }
         return data;
     }
 
