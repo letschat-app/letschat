@@ -65,6 +65,15 @@ public class EventService {
     // Legacy support
     public Mono<Long> addevent(EventInfo event, String userId) {
         event.setUserId(userId);
+        if (event.getIsSync() == null || !event.getIsSync()) {
+            event.setIsSync(true);
+        }
+        if (event.getIsAdded() == null || !event.getIsAdded()) {
+            event.setIsAdded(true);
+        }
+        if (event.getReminderEnabled() == null) {
+            event.setReminderEnabled(true);
+        }
         if (event.getReminderOffset() == null) {
             event.setReminderOffset(60);
         }
@@ -137,7 +146,7 @@ public class EventService {
                     youText = "You scheduled " + article + " " + safeTitle;
                 }
 
-                String fullContent = othersText + "/" + youText;
+                String fullContent = othersText + "/" + youText + "/" + groupEventId;
                 String bannerMsgId = "Msg-" + UUID.randomUUID().toString();
                 java.time.LocalDateTime now = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
@@ -147,7 +156,7 @@ public class EventService {
                     userId,
                     "event-banner-pin",
                     fullContent,
-                    groupEventId,
+                    null,
                     null,
                     now,
                     0
@@ -193,6 +202,10 @@ public class EventService {
                                     );
                                 })
                                 .then();
+                        })
+                        .onErrorResume(err -> {
+                            System.err.println("[EventService] Error sending push notification: " + err.getMessage());
+                            return Mono.empty();
                         })
                 );
             })

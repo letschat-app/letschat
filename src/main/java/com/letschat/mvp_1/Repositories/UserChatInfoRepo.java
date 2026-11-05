@@ -48,7 +48,7 @@ As chat_min_ids on user_chats."ChatId"=chat_min_ids."ChatId" join "ClassRoomInfo
             Flux<ChatBoxReturnDTO> findClassRoomChat(String UserId);
 
     //@Query("select \"UserId\" from \"UserChat\" where \"ChatId\"=:ChatId and \"UserId\"!=:UserId and \"Status\"='allowed'")
-    @Query("select \"UserId\" from \"UserChat\" where \"ChatId\"=:ChatId and \"Status\"='allowed'")
+    @Query("select \"UserId\" from \"UserChat\" where \"ChatId\"=:ChatId and (\"Status\"='allowed' or \"Status\" is null)")
     Flux<String> findUserIds(String ChatId);
 
     @Query("""

@@ -343,10 +343,10 @@ public interface EventInfoRepo extends ReactiveCrudRepository<EventInfo, Long> {
         WHERE (is_sync = true OR is_sync IS NULL)
           AND (reminder_enabled = true OR reminder_enabled IS NULL)
           AND (action IS NULL OR action != 'cancelled')
-          AND start_time >= :now
-          AND (start_time - (COALESCE(reminder_offset, 60) * INTERVAL '1 minute')) <= :now
+          AND start_time >= :windowStart
+          AND start_time <= :maxFuture
     """)
-    Flux<EventInfo> findEventsForReminderEvaluation(Instant now);
+    Flux<EventInfo> findEventsForReminderEvaluation(Instant windowStart, Instant maxFuture);
 
 
 

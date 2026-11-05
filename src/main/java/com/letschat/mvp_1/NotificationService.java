@@ -863,19 +863,20 @@ public class NotificationService {
 
     public Mono<Integer> sendEventReminders() {
         Instant now = Instant.now();
+        Instant windowStart = now.minus(2, ChronoUnit.HOURS);
+        Instant maxFuture = now.plus(25, ChronoUnit.HOURS);
 
-        return eventInfoRepo.findEventsForReminderEvaluation(now)
+        return eventInfoRepo.findEventsForReminderEvaluation(windowStart, maxFuture)
                 .filter(event -> {
                     if (event.getStartTime() == null) return false;
                     if ("cancelled".equalsIgnoreCase(event.getAction())) return false;
                     if (Boolean.FALSE.equals(event.getReminderEnabled())) return false;
+                    if (now.isAfter(event.getStartTime())) return false;
 
                     int offsetMins = event.getReminderOffset() != null ? event.getReminderOffset() : 60;
                     Instant reminderTargetTime = event.getStartTime().minus(offsetMins, ChronoUnit.MINUTES);
-                    // B1: Fire at or after target time; before event starts; within 15 min window
-                    return !now.isBefore(reminderTargetTime)
-                            && !now.isAfter(event.getStartTime())
-                            && now.isBefore(reminderTargetTime.plus(15, ChronoUnit.MINUTES));
+                    // Fire if target time has arrived
+                    return !now.isBefore(reminderTargetTime);
                 })
                 .flatMap(event -> {
                     int offset = event.getReminderOffset() != null ? event.getReminderOffset() : 60;

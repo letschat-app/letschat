@@ -1,5 +1,4 @@
 package com.letschat.mvp_1.DTOs;
-//package com.letschat.mvp_1.DTOs;
 
 import java.time.LocalDateTime;
 
@@ -14,6 +13,8 @@ public class SendingMessageDTO {
     private String repliedto;
     private String forwardedfrom;
     private Integer spaceid;
+    private String pendingid;
+    private PollUpdateDTO poll;
 
     public SendingMessageDTO(){}
     public SendingMessageDTO(Integer spaceid,String msgid,String chatid,String sendername,String senderid,String type,String content,LocalDateTime timestamp,String repliedto,String forwardedfrom){
@@ -99,7 +100,12 @@ public class SendingMessageDTO {
         this.spaceid=spaceid;
     }
 
-    private PollUpdateDTO poll;
+    public String getpendingid(){
+        return pendingid;
+    }
+    public void setpendingid(String pendingid){
+        this.pendingid=pendingid;
+    }
 
     public PollUpdateDTO getpoll(){
         return poll;
@@ -108,4 +114,3 @@ public class SendingMessageDTO {
         this.poll=poll;
     }
 }
-

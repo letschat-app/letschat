@@ -38,6 +38,7 @@ import com.letschat.mvp_1.Service.PollService;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import com.letschat.mvp_1.DTOs.PollUpdateDTO;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -371,6 +372,14 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                 return loadmsg(sessionId, json);
             }
 
+            String frameType = node.path("type").asText("");
+            if ("media_pending".equals(frameType) || "media_pending_cancel".equals(frameType)) {
+                if (node instanceof ObjectNode objectNode) {
+                    return relayMediaPending(sessionId, objectNode);
+                }
+                return Mono.empty();
+            }
+
             ReceivingMessageDTO data;
             try {
                 data = objectMapper.treeToValue(node, ReceivingMessageDTO.class);
@@ -378,6 +387,7 @@ public Mono<Void> onrecieve(String sessionId, String json) {
                 System.out.println("load msg calling");
                 return loadmsg(sessionId, json);
             }
+
 
             if (data.getchatid() == null) {
                 return Mono.error(new RuntimeException("ChatId is null"));
@@ -779,8 +789,43 @@ private SendingMessageDTO buildMsg(String msgId, String chatId,
     msg.setrepliedto(data.getrepliedto());
     msg.setforwardedfrom(data.getforwardedfrom());
     msg.setspaceid(data.getspaceid());
+    msg.setpendingid(data.getpendingid());
     return msg;
 }
+
+    private Mono<Void> relayMediaPending(String sessionId, ObjectNode node) {
+        String userId = this.userid.get(sessionId);
+        String chatId = node.path("chatid").asText(null);
+        if (userId == null || chatId == null || chatId.isBlank()) {
+            return Mono.empty();
+        }
+
+        String px = node.path("px").asText(null);
+        if (px != null && px.length() > 1200) {
+            return Mono.empty();
+        }
+
+        String fileName = node.path("fileName").asText(null);
+        if (fileName != null && fileName.length() > 200) {
+            return Mono.empty();
+        }
+
+        return getusername(chatId, userId)
+            .flatMap(username -> {
+                node.put("senderid", userId);
+                node.put("sendername", username);
+
+                return getUserIds(chatId, userId)
+                    .flatMap(receiverId -> {
+                        Sinks.Many<String> receiverSink = usersink.get(receiverId);
+                        if (receiverSink != null) {
+                            return sendToSinkAsync(receiverSink, node);
+                        }
+                        return Mono.empty();
+                    })
+                    .then();
+            });
+    }
 
 private Mono<Void> sendToSinkAsync(Sinks.Many<String> sink, Object payload) {
     if (sink == null) return Mono.empty();
@@ -1515,8 +1560,21 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                         msg.setrepliedto(eventId);
                         try {
                             String sendJson = objectMapper.writeValueAsString(msg);
+                            boolean emitted = false;
+                            Set<Sinks.Many<String>> targetSinks = usersinks.get(targetUserId);
+                            if (targetSinks != null && !targetSinks.isEmpty()) {
+                                for (Sinks.Many<String> s : targetSinks) {
+                                    try {
+                                        s.tryEmitNext(sendJson);
+                                        emitted = true;
+                                    } catch (Exception ignored) {}
+                                }
+                            }
                             if (receiverSink != null) {
                                 receiverSink.tryEmitNext(sendJson);
+                                emitted = true;
+                            }
+                            if (emitted) {
                                 if (!targetUserId.equals(senderId)) {
                                     status.set("delivered");
                                     if (isReceiverActive(targetUserId, chatId)) {
@@ -1530,6 +1588,10 @@ private void fireNotification(String receiverId, String chatId, String senderId,
                             System.err.println("broadcastBannerPin error: " + e.getMessage());
                         }
                         return messageTrackHistoryRepo.insert(msgId, senderId, targetUserId, status.get(), now)
+                            .onErrorResume(e -> {
+                                System.err.println("broadcastBannerPin track history error: " + e.getMessage());
+                                return Mono.empty();
+                            })
                             .then(Mono.just("inserted"));
                     })
                     .then();

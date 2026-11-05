@@ -11,6 +11,7 @@ public class ReceivingMessageDTO {
     private String repliedto;
     private String forwardedfrom;
     private Integer spaceid;
+    private String pendingid;
 
     public ReceivingMessageDTO(){}
     public ReceivingMessageDTO(Integer spaceid,String tempmsgid,String chatid,String type,String content,LocalDateTime timestamp,String repliedto,String forwardedfrom){
@@ -78,5 +79,12 @@ public class ReceivingMessageDTO {
     }
     public void setspaceid(Integer spaceid){
         this.spaceid=spaceid;
+    }
+
+    public String getpendingid(){
+        return pendingid;
+    }
+    public void setpendingid(String pendingid){
+        this.pendingid=pendingid;
     }
 }
