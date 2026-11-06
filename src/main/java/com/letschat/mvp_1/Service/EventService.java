@@ -222,6 +222,16 @@ public class EventService {
         Instant end = dto.getEndTime() != null ? dto.getEndTime() : start.plus(1, ChronoUnit.HOURS);
         Integer reminderOffset = dto.getReminderOffset() != null ? dto.getReminderOffset() : 60;
 
+        // Receiver cannot add past event once start time has passed
+        if (dto.getGroupEventId() != null && "PERSONAL".equalsIgnoreCase(dto.getScope())) {
+            if (start.isBefore(Instant.now())) {
+                return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "Cannot add event to calendar once start time has passed"
+                ));
+            }
+        }
+
         // Scope "ALL" within a group: batch insert for all group members
         if ("ALL".equalsIgnoreCase(dto.getScope()) && dto.getChatId() != null && !dto.getChatId().isEmpty()) {
             return groupInfoRepo.getMembers(dto.getChatId())
@@ -472,6 +482,18 @@ public class EventService {
                             "Only the event creator can edit or reschedule this event"
                         ));
                     }
+                    if (existing.getStartTime() != null && existing.getStartTime().isBefore(Instant.now())) {
+                        return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Cannot edit or reschedule an event whose start time has already passed"
+                        ));
+                    }
+                    if (existing.getEndTime() != null && existing.getEndTime().isBefore(Instant.now())) {
+                        return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Cannot edit a past event"
+                        ));
+                    }
                     return performRescheduleOrCancel(dto, userId);
                 })
                 .switchIfEmpty(Mono.defer(() -> performRescheduleOrCancel(dto, userId)));
@@ -484,6 +506,18 @@ public class EventService {
                         return Mono.error(new org.springframework.web.server.ResponseStatusException(
                             org.springframework.http.HttpStatus.FORBIDDEN,
                             "Only the event creator can edit or reschedule this event"
+                        ));
+                    }
+                    if (existing.getStartTime() != null && existing.getStartTime().isBefore(Instant.now())) {
+                        return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Cannot edit or reschedule an event whose start time has already passed"
+                        ));
+                    }
+                    if (existing.getEndTime() != null && existing.getEndTime().isBefore(Instant.now())) {
+                        return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                            org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Cannot edit a past event"
                         ));
                     }
                     return performRescheduleOrCancel(dto, userId);
@@ -657,8 +691,32 @@ public class EventService {
 
     // ================= CONFLICT CHECKING =================
     public Mono<Boolean> hasConflict(String userId, Instant start, Instant end) {
-        return eventInfoRepo.countOverlappingEvents(userId, start, end)
-            .map(count -> count > 0);
+        return hasConflict(userId, start, end, null, null);
+    }
+
+    public Mono<Boolean> hasConflict(String userId, Instant start, Instant end, String chatId, String excludeGroupEventId) {
+        return checkConflictDetails(userId, start, end, chatId, excludeGroupEventId)
+            .map(res -> Boolean.TRUE.equals(res.get("hasConflict")));
+    }
+
+    public Mono<Map<String, Object>> checkConflictDetails(String userId, Instant start, Instant end, String chatId, String excludeGroupEventId) {
+        return eventInfoRepo.findOverlappingEventWithChat(userId, chatId, excludeGroupEventId, start, end)
+            .map(ev -> {
+                Map<String, Object> map = new java.util.HashMap<>();
+                map.put("hasConflict", true);
+                map.put("eventId", ev.getEventId());
+                map.put("groupEventId", ev.getGroupEventId());
+                map.put("eventTitle", ev.getEventTitle() != null ? ev.getEventTitle() : "Existing Event");
+                map.put("startTime", ev.getStartTime() != null ? ev.getStartTime().toString() : null);
+                map.put("endTime", ev.getEndTime() != null ? ev.getEndTime().toString() : null);
+                map.put("chatId", ev.getChatId());
+                map.put("location", ev.getLocation());
+                map.put("meetingType", ev.getMeetingType());
+                map.put("meetingLink", ev.getMeetingLink());
+                map.put("creatorName", ev.getCreatorName());
+                return map;
+            })
+            .defaultIfEmpty(Map.of("hasConflict", false));
     }
 
     // ================= PUBLIC EXTERNAL BOOKING =================

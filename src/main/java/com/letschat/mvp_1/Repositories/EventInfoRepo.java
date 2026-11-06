@@ -333,6 +333,29 @@ public interface EventInfoRepo extends ReactiveCrudRepository<EventInfo, Long> {
 
     Mono<Long> countOverlappingEvents(String userId, Instant start, Instant end);
 
+    @Query("""
+        SELECT *
+        FROM "EventInfo"
+        WHERE ((user_id = :userId) OR (:chatId IS NOT NULL AND chat_id = :chatId AND (is_group_visible = true OR is_group_visible IS NULL)))
+          AND (action IS NULL OR action != 'cancelled')
+          AND (:excludeGroupEventId IS NULL OR group_event_id IS NULL OR group_event_id != :excludeGroupEventId)
+          AND start_time < :end
+          AND end_time > :start
+        LIMIT 1
+    """)
+    Mono<EventInfo> findOverlappingEventWithChat(String userId, String chatId, String excludeGroupEventId, Instant start, Instant end);
+
+    @Query("""
+        SELECT COUNT(*)
+        FROM "EventInfo"
+        WHERE ((user_id = :userId) OR (:chatId IS NOT NULL AND chat_id = :chatId AND (is_group_visible = true OR is_group_visible IS NULL)))
+          AND (action IS NULL OR action != 'cancelled')
+          AND (:excludeGroupEventId IS NULL OR group_event_id IS NULL OR group_event_id != :excludeGroupEventId)
+          AND start_time < :end
+          AND end_time > :start
+    """)
+    Mono<Long> countOverlappingEventsWithChat(String userId, String chatId, String excludeGroupEventId, Instant start, Instant end);
+
 
 
     // Scheduler query for dynamic reminders (events within 25 hours where reminder is enabled)
